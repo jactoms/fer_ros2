@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>fer_track_hand</name>
+  <version>0.0.0</version>
+  <description>Hand tracker: a controller that moves the tracker cube of the fer_hand_mjc simulation side by side with the hand and reports success.</description>
+  <maintainer email="jacobtom99rp@gmail.com">Tom Jacob</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>rosgraph_msgs</depend>
+  <!-- The simulation it tracks in (launched with hand:=true), its run_node (node_main, no
+       MuJoCo) and, in the tests, its HandMotion. -->
+  <depend>fer_hand_mjc</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

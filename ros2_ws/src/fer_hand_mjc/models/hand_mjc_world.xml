@@ -1,0 +1,37 @@
+<!-- World of the hand scene: physics options, view, floor, light and origin axes.
+     Kept apart from the bodies (hand_scene.xml includes it), so a scene with other bodies,
+     e.g. a robot, can reuse it. -->
+<mujoco>
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+
+  <visual>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6"/>
+    <global azimuth="160" elevation="-15"/>
+  </visual>
+
+  <!-- Default viewer camera: looks at the hand workspace from +x. -->
+  <statistic center="0.5 -0.05 0.45" extent="0.6"/>
+
+  <asset>
+    <texture name="sky" type="skybox" builtin="gradient" rgb1="0.6 0.75 0.9" rgb2="0.1 0.15 0.2"
+             width="256" height="256"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.25 0.28 0.32" rgb2="0.32 0.35 0.4"
+             width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0.1"/>
+    <material name="skin" rgba="0.95 0.75 0.6 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 3" dir="0 0 -1" directional="true"/>
+    <geom name="floor" type="plane" size="2 2 0.05" material="grid"/>
+
+    <!-- Origin (0, 0, 0) for reference: x red, y green, z blue, 0.2 m; visual only. -->
+    <geom name="origin" type="sphere" size="0.015" rgba="1 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="origin_x" type="capsule" fromto="0 0 0 0.2 0 0" size="0.006" rgba="1 0 0 1"
+          contype="0" conaffinity="0"/>
+    <geom name="origin_y" type="capsule" fromto="0 0 0 0 0.2 0" size="0.006" rgba="0 1 0 1"
+          contype="0" conaffinity="0"/>
+    <geom name="origin_z" type="capsule" fromto="0 0 0 0 0 0.2" size="0.006" rgba="0 0 1 1"
+          contype="0" conaffinity="0"/>
+  </worldbody>
+</mujoco>

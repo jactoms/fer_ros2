@@ -1,0 +1,13 @@
+# fer_track_hand: moves the tracker cube of fer_hand_mjc to the hand. Metres, seconds.
+fer_track_hand:
+  ros__parameters:
+    frame_id: world
+    tracker_body: tracker         # commanded body in fer_hand_mjc (its commanded_bodies)
+    start_delay: 4.0              # simulation time after this node starts, before tracking
+    gap: 0.08                     # side-by-side centre distance: hand radius + cube half size
+    side: auto                    # auto (the side the cube comes from) | +x | -x | +y | -y
+    gain: 2.0                     # 1/s, on the offset to the side-by-side position
+    max_speed: 0.25               # m/s, tracker speed limit (hand: <= 0.18 m/s)
+    velocity_time_constant: 0.05  # low-pass of the hand velocity estimate
+    tolerance: 0.01               # success band: |distance - gap| <= tolerance
+    hold_time: 2.0                # in the band this long = SUCCESS

@@ -187,6 +187,13 @@ RUN if [ "$WITH_MUJOCO" = "1" ]; then \
         echo "WITH_MUJOCO=${WITH_MUJOCO}, skipping the MuJoCo packages"; \
     fi
 
+# MuJoCo Python bindings for fer_hand_mjc, same version as mujoco_vendor's library.
+ARG MUJOCO_PY_VERSION=3.4.0
+RUN if [ "$WITH_MUJOCO" = "1" ]; then \
+        pip3 install --user --no-cache-dir --break-system-packages --no-warn-script-location \
+        mujoco==${MUJOCO_PY_VERSION}; \
+    fi
+
 ##############################################################################
 ##                                 Build ROS                                ##
 ##############################################################################

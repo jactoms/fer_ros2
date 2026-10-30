@@ -1,0 +1,20 @@
+<!-- The one simulation: the shared world, the hand (scripted) and the tracker (commanded over
+     ROS by fer_track_hand, see commanded_bodies in config/hand_mjc.yaml). -->
+<mujoco model="fer_hand_mjc">
+  <include file="hand_mjc_world.xml"/>
+
+  <worldbody>
+    <!-- The hand is a sphere (radius 0.04 m); its centre is the published position. -->
+    <body name="hand" mocap="true" pos="0.5 0.0 0.5">
+      <geom name="hand_sphere" type="sphere" size="0.04" material="skin"
+            contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- Tracker: cube of the same size (half size 0.04 m = hand radius), away from the hand
+         area. Stays here until a command arrives on /hand_mjc/tracker/command. -->
+    <body name="tracker" mocap="true" pos="0.2 -0.6 0.2">
+      <geom name="tracker_cube" type="box" size="0.04 0.04 0.04" rgba="0.2 0.5 0.95 1"
+            contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>
