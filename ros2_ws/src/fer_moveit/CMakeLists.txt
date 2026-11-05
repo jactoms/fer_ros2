@@ -18,11 +18,14 @@ find_package(fer_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(moveit_core REQUIRED)
 find_package(moveit_msgs REQUIRED)
+find_package(moveit_ros_planning REQUIRED)
+find_package(moveit_servo REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 # Real profile only; without it the server runs with hardware:=mujoco only.
 find_package(franka_msgs QUIET)
 
@@ -33,23 +36,27 @@ set(dependencies
   geometry_msgs
   moveit_core
   moveit_msgs
+  moveit_ros_planning
   sensor_msgs
   std_msgs
   tf2
   tf2_geometry_msgs
   tf2_ros
+  trajectory_msgs
 )
 
 add_library(motion_server STATIC
   src/core/checks.cpp
   src/adapters/world_model_client.cpp
   src/adapters/move_group_client.cpp
+  src/adapters/servo_streamer.cpp
   src/motion_server.cpp
 )
 set_target_properties(motion_server PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(motion_server PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 ament_target_dependencies(motion_server ${dependencies})
+target_link_libraries(motion_server moveit_servo::moveit_servo_lib_cpp)
 if(franka_msgs_FOUND)
   target_sources(motion_server PRIVATE src/adapters/robot_mode_monitor.cpp)
   ament_target_dependencies(motion_server franka_msgs)
@@ -60,7 +67,11 @@ endif()
 add_executable(fer_moveit_motion_server src/main.cpp)
 target_link_libraries(fer_moveit_motion_server motion_server)
 
-install(TARGETS fer_moveit_motion_server DESTINATION lib/${PROJECT_NAME})
+# WP2 check of the Cartesian streamer; started by launch/fer_streamer_check.launch.py.
+add_executable(fer_moveit_streamer_check src/streamer_check.cpp)
+target_link_libraries(fer_moveit_streamer_check motion_server)
+
+install(TARGETS fer_moveit_motion_server fer_moveit_streamer_check DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY
   config

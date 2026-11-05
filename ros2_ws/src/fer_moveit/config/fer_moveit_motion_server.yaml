@@ -10,3 +10,26 @@ fer_moveit_motion_server:
     world_model_timeout: 2.0            # s
     move_group_timeout: 7.0             # s, at least planning_time
     startup_timeout: 10.0               # s
+
+    # /motion/follow: MoveIt Servo, run as a library (adapters/servo_streamer).
+    moveit_servo:
+      move_group_name: fer_arm
+      publish_period: 0.01              # s, one control cycle
+      max_expected_latency: 0.1         # s, how far ahead each joint command reaches
+      command_in_type: speed_units      # twists in m/s and rad/s
+      scale: {linear: 0.25, rotational: 0.8, joint: 0.5}
+      incoming_command_timeout: 0.1     # s
+      command_out_type: trajectory_msgs/JointTrajectory
+      command_out_topic: /effort_trajectory_controller/joint_trajectory
+      publish_joint_positions: true
+      publish_joint_velocities: false   # true: the JTC rejects every message (non-zero end velocity)
+      publish_joint_accelerations: false
+      joint_topic: /joint_states
+      is_primary_planning_scene_monitor: false
+      monitored_planning_scene_topic: /monitored_planning_scene
+      use_smoothing: false              # true: the TCP covers only ~57 % of the commanded motion
+      check_collisions: true
+      collision_check_rate: 10.0        # Hz
+      lower_singularity_threshold: 17.0
+      hard_stop_singularity_threshold: 30.0
+      joint_limit_margins: [0.12]       # rad
