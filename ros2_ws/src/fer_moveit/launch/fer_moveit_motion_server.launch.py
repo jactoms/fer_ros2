@@ -1,11 +1,18 @@
 """MoveIt motion server of the FER platform; move_group comes from fer_move_group.launch.py."""
+import os
+import sys
 from typing import List
+
+from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
+sys.path.insert(0, os.path.join(get_package_share_directory('fer_moveit'), 'launch'))
+from moveit_parameters import moveit_parameters  # noqa: E402
 
 HARDWARE = ('real', 'mujoco')
 
@@ -24,8 +31,9 @@ def launch_setup(context, *args, **kwargs) -> List[Node]:
             name='fer_moveit_motion_server',
             output='both',
             arguments=['--ros-args', '--log-level', log_level],
-            parameters=[params_file, {'hardware': hardware,
-                                      'use_sim_time': hardware == 'mujoco'}],
+            # The robot model is for MoveIt Servo (/motion/follow).
+            parameters=[params_file, *moveit_parameters(),
+                        {'hardware': hardware, 'use_sim_time': hardware == 'mujoco'}],
         )
     ]
 

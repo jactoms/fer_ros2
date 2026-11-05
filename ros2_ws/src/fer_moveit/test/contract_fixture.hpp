@@ -89,8 +89,8 @@ protected:
     {
       robot_mode_ = std::make_unique<RobotModeMonitor>(node_, group_);
     }
-    server_ =
-      std::make_unique<MotionServer>(node_, *world_model_, *move_group_, robot_mode_.get(), group_);
+    server_ = std::make_unique<MotionServer>(
+      node_, *world_model_, *move_group_, robot_mode_.get(), group_, make_streamer_);
 
     pose_client_ = rclcpp_action::create_client<MoveToPose>(fakes_, "/motion/move_to_pose");
     joints_client_ = rclcpp_action::create_client<MoveToJoints>(fakes_, "/motion/move_to_joints");
@@ -187,6 +187,7 @@ protected:
   std::unique_ptr<MoveGroupClient> move_group_;
   std::unique_ptr<RobotModeMonitor> robot_mode_;
   std::unique_ptr<MotionServer> server_;
+  MotionServer::StreamerFactory make_streamer_;  // empty: /motion/follow is UNSUPPORTED
   rclcpp_action::Client<MoveToPose>::SharedPtr pose_client_;
   rclcpp_action::Client<MoveToJoints>::SharedPtr joints_client_;
   rclcpp::Client<CheckReachable>::SharedPtr reachable_client_;

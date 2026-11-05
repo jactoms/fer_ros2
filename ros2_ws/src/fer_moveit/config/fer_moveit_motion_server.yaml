@@ -10,6 +10,13 @@ fer_moveit_motion_server:
     world_model_timeout: 2.0            # s
     move_group_timeout: 7.0             # s, at least planning_time
     startup_timeout: 10.0               # s
+    # /motion/follow: v = v_target + gain * (target - tcp), capped; caps scale with speed_scaling.
+    follow_gain: 2.0                    # 1/s
+    follow_max_speed: 0.25              # m/s at speed_scaling 1
+    follow_rotation_gain: 2.0           # 1/s
+    follow_max_rotation_speed: 0.5      # rad/s at speed_scaling 1
+    follow_velocity_time_constant: 0.05 # s, low-pass of the target velocity estimate
+    follow_feedback_period: 0.1         # s
 
     # /motion/follow: MoveIt Servo, run as a library (adapters/servo_streamer).
     moveit_servo:

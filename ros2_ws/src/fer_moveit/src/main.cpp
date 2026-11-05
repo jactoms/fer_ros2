@@ -4,6 +4,7 @@
 
 #include "fer_moveit/adapters/move_group_client.hpp"
 #include "fer_moveit/adapters/robot_mode_monitor.hpp"
+#include "fer_moveit/adapters/servo_streamer.hpp"
 #include "fer_moveit/adapters/world_model_client.hpp"
 #include "fer_moveit/motion_server.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -38,7 +39,10 @@ int main(int argc, char ** argv)
       return 1;
     }
   }
-  fer_moveit::MotionServer server(node, world_model, move_group, robot_mode.get(), group);
+  // MoveIt Servo for /motion/follow, created on the first Follow goal.
+  fer_moveit::MotionServer server(
+    node, world_model, move_group, robot_mode.get(), group,
+    [node] { return std::make_unique<fer_moveit::ServoStreamer>(node); });
 
   rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 4);
   executor.add_node(node);

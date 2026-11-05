@@ -47,6 +47,7 @@ set(dependencies
 
 add_library(motion_server STATIC
   src/core/checks.cpp
+  src/core/follow_law.cpp
   src/adapters/world_model_client.cpp
   src/adapters/move_group_client.cpp
   src/adapters/servo_streamer.cpp
@@ -98,8 +99,14 @@ if(BUILD_TESTING)
   ament_add_ros_isolated_gtest(test_checks test/test_checks.cpp)
   target_link_libraries(test_checks motion_server)
 
+  ament_add_ros_isolated_gtest(test_follow_law test/test_follow_law.cpp)
+  target_link_libraries(test_follow_law motion_server)
+
   ament_add_ros_isolated_gtest(test_contract test/test_contract.cpp TIMEOUT 300)
   target_link_libraries(test_contract motion_server)
+
+  ament_add_ros_isolated_gtest(test_contract_follow test/test_contract_follow.cpp TIMEOUT 300)
+  target_link_libraries(test_contract_follow motion_server)
 
   if(franka_msgs_FOUND)
     ament_add_ros_isolated_gtest(test_robot_mode test/test_robot_mode.cpp TIMEOUT 120)

@@ -4,20 +4,24 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "fer_interfaces/action/follow.hpp"
 #include "fer_interfaces/action/move_to_joints.hpp"
 #include "fer_interfaces/action/move_to_pose.hpp"
 #include "fer_interfaces/msg/pose_target.hpp"
 #include "fer_interfaces/msg/world_object.hpp"
 #include "fer_interfaces/srv/check_reachable.hpp"
+#include "fer_moveit/adapters/cartesian_streamer.hpp"
 #include "fer_moveit/adapters/move_group_client.hpp"
 #include "fer_moveit/adapters/robot_mode_monitor.hpp"
 #include "fer_moveit/adapters/world_model_client.hpp"
+#include "fer_moveit/core/follow_law.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
@@ -27,18 +31,23 @@
 namespace fer_moveit
 {
 
-/// \brief Serves /motion/move_to_pose, /motion/move_to_joints and /motion/check_reachable.
+/// \brief Serves /motion/move_to_pose, /motion/move_to_joints, /motion/follow and
+/// /motion/check_reachable.
 ///
 /// One motion runs at a time; a newer goal stops the running one, which ends CANCELLED once
 /// the arm is at rest.
 class MotionServer
 {
 public:
+  /// Creates the Cartesian stage of /motion/follow on its first goal.
+  using StreamerFactory = std::function<std::unique_ptr<CartesianStreamer>()>;
+
   /// \param robot_mode null when the hardware reports no robot mode (MuJoCo).
+  /// \param make_streamer empty: /motion/follow answers UNSUPPORTED.
   MotionServer(
     const rclcpp::Node::SharedPtr & node, WorldModelClient & world_model,
     MoveGroupClient & move_group, const RobotModeMonitor * robot_mode,
-    const rclcpp::CallbackGroup::SharedPtr & group);
+    const rclcpp::CallbackGroup::SharedPtr & group, StreamerFactory make_streamer = {});
 
   /// \brief True once move_group is reachable and a joint state has arrived.
   bool ready() const { return ready_; }
@@ -46,6 +55,7 @@ public:
 private:
   using MoveToPose = fer_interfaces::action::MoveToPose;
   using MoveToJoints = fer_interfaces::action::MoveToJoints;
+  using Follow = fer_interfaces::action::Follow;
   using CheckReachable = fer_interfaces::srv::CheckReachable;
 
   template <typename ActionT>
@@ -53,6 +63,27 @@ private:
 
   template <typename ActionT>
   void execute(const std::shared_ptr<rclcpp_action::ServerGoalHandle<ActionT>> & goal_handle);
+
+  /// End the goal with \p result and release it.
+  template <typename ActionT>
+  void finish(
+    const std::shared_ptr<rclcpp_action::ServerGoalHandle<ActionT>> & goal_handle,
+    const std::shared_ptr<typename ActionT::Result> & result);
+
+  void execute_follow(const std::shared_ptr<rclcpp_action::ServerGoalHandle<Follow>> & goal_handle);
+  /// The follow loop; returns only by throwing (Interrupted, MotionError).
+  /// \p on_started is called once the arm is commanded, \p on_distance with the feedback.
+  void follow(
+    const Follow::Goal & goal, CartesianStreamer & streamer,
+    const std::function<bool()> & interrupted, const std::function<void()> & on_started,
+    const std::function<void(float)> & on_distance);
+  CartesianStreamer & streamer();
+  /// Brake the stream until the arm rests; false if it does not within rest_timeout.
+  bool halt(CartesianStreamer & streamer);
+  /// Sleep until \p time on the node clock.
+  /// \throws MotionError TIMEOUT if that clock (sim time) stops advancing.
+  void sleep_until(const rclcpp::Time & time);
+  Eigen::Isometry3d lookup(const std::string & frame) const;
 
   MotionTarget target_of(const MoveToPose::Goal & goal) const;
   MotionTarget target_of(const MoveToJoints::Goal & goal) const;
@@ -79,12 +110,19 @@ private:
   double rest_velocity_;
   double rest_timeout_;
   double startup_timeout_;
+  FollowGains follow_gains_;
+  double follow_velocity_time_constant_;
+  double follow_feedback_period_;
+
+  StreamerFactory make_streamer_;
+  std::unique_ptr<CartesianStreamer> streamer_;
 
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
   rclcpp_action::Server<MoveToPose>::SharedPtr pose_server_;
   rclcpp_action::Server<MoveToJoints>::SharedPtr joints_server_;
+  rclcpp_action::Server<Follow>::SharedPtr follow_server_;
 
   rclcpp::Service<CheckReachable>::SharedPtr reachable_service_;
 

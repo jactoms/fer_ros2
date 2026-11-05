@@ -9,10 +9,14 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
+#include "fer_interfaces/msg/outcome.hpp"
 #include "fer_interfaces/msg/world_object.hpp"
 #include "fer_interfaces/srv/query_objects.hpp"
+#include "fer_moveit/adapters/cartesian_streamer.hpp"
+#include "fer_moveit/core/checks.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "moveit_msgs/action/execute_trajectory.hpp"
 #include "moveit_msgs/action/move_group.hpp"
@@ -26,6 +30,7 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "tf2_ros/static_transform_broadcaster.hpp"
+#include "tf2_ros/transform_broadcaster.hpp"
 
 namespace fer_moveit
 {
@@ -384,6 +389,99 @@ inline std::shared_ptr<tf2_ros::StaticTransformBroadcaster> camera_frame(
   broadcaster->sendTransform(transform);
   return broadcaster;
 }
+
+/// Pose of \p child in base, turned by \p yaw about z.
+inline geometry_msgs::msg::TransformStamped frame(
+  const rclcpp::Node::SharedPtr & node, const std::string & child, double x, double y, double z,
+  double yaw = 0.0)
+{
+  geometry_msgs::msg::TransformStamped transform;
+  transform.header.stamp = node->now();
+  transform.header.frame_id = "base";
+  transform.child_frame_id = child;
+  transform.transform.translation.x = x;
+  transform.transform.translation.y = y;
+  transform.transform.translation.z = z;
+  transform.transform.rotation.z = std::sin(yaw / 2.0);
+  transform.transform.rotation.w = std::cos(yaw / 2.0);
+  return transform;
+}
+
+/// A frame republished at 100 Hz with fresh stamps, like a tracker; freeze() stops it.
+class MovingFrame
+{
+public:
+  MovingFrame(const rclcpp::Node::SharedPtr & node, geometry_msgs::msg::TransformStamped transform)
+  : transform_(std::move(transform)),
+    broadcaster_(std::make_shared<tf2_ros::TransformBroadcaster>(node))
+  {
+    timer_ = node->create_wall_timer(
+      std::chrono::milliseconds(10),
+      [this, node]
+      {
+        transform_.header.stamp = node->now();
+        broadcaster_->sendTransform(transform_);
+      });
+  }
+
+  void freeze() { timer_->cancel(); }
+
+private:
+  geometry_msgs::msg::TransformStamped transform_;
+  std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
+  rclcpp::TimerBase::SharedPtr timer_;
+};
+
+/// CartesianStreamer that only records what it is told: no Servo, no arm.
+class FakeStreamer : public CartesianStreamer
+{
+public:
+  /// \param start_error 0: start() succeeds; else start() throws MotionError with this code.
+  explicit FakeStreamer(uint8_t start_error = 0) : start_error_(start_error) {}
+
+  double period() const override { return 0.01; }
+
+  void start() override
+  {
+    if (start_error_ != 0)
+    {
+      throw MotionError(start_error_, "fake streamer cannot start");
+    }
+    ++starts;
+  }
+
+  StreamStatus step(const Twist & twist) override
+  {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      last_twist_ = twist;
+    }
+    ++steps;
+    return {step_code.load(), "fake stream"};
+  }
+
+  bool halt() override
+  {
+    ++halts;
+    return true;
+  }
+
+  Twist last_twist()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_twist_;
+  }
+
+  std::atomic<int> starts{0};
+  std::atomic<int> steps{0};
+  std::atomic<int> halts{0};
+  std::atomic<StreamStatus::Code> step_code{StreamStatus::Code::OK};
+
+private:
+  uint8_t start_error_;
+  std::mutex mutex_;
+  Twist last_twist_{Twist::Zero()};
+};
 
 }  // namespace fer_moveit
 

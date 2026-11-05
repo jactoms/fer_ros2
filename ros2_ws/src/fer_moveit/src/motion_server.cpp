@@ -8,6 +8,8 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "fer_interfaces/msg/joint_configuration.hpp"
@@ -28,6 +30,7 @@ namespace
 {
 
 constexpr char BASE_FRAME[] = "base";
+constexpr char TCP_FRAME[] = "fer_hand_tcp";
 
 Outcome make_outcome(uint8_t code, const std::string & message)
 {
@@ -48,6 +51,26 @@ void check_ids(const std::vector<WorldObject> & objects, const std::vector<std::
       throw MotionError(Outcome::NOT_FOUND, "unknown object '" + id + "' in may_touch");
     }
   }
+}
+
+Eigen::Isometry3d to_eigen(const geometry_msgs::msg::Transform & t)
+{
+  Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+  pose.translation() = Eigen::Vector3d(t.translation.x, t.translation.y, t.translation.z);
+  pose.linear() = Eigen::Quaterniond(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z)
+                    .normalized()
+                    .toRotationMatrix();
+  return pose;
+}
+
+Eigen::Isometry3d to_eigen(const geometry_msgs::msg::Pose & p)
+{
+  geometry_msgs::msg::Transform t;
+  t.translation.x = p.position.x;
+  t.translation.y = p.position.y;
+  t.translation.z = p.position.z;
+  t.rotation = p.orientation;
+  return to_eigen(t);
 }
 
 }  // namespace
@@ -74,7 +97,19 @@ typename rclcpp_action::Server<ActionT>::SharedPtr MotionServer::create_action(
         std::lock_guard<std::mutex> lock(goal_mutex_);
         active_goal_ = goal_handle->get_goal_id();
       }
-      std::thread([this, goal_handle] { execute<ActionT>(goal_handle); }).detach();
+      std::thread(
+        [this, goal_handle]
+        {
+          if constexpr (std::is_same_v<ActionT, Follow>)
+          {
+            execute_follow(goal_handle);
+          }
+          else
+          {
+            execute<ActionT>(goal_handle);
+          }
+        })
+        .detach();
     },
     rcl_action_server_get_default_options(), group_);
 }
@@ -148,7 +183,14 @@ void MotionServer::execute(
   {
     result->outcome = make_outcome(Outcome::EXECUTION_FAILED, e.what());
   }
+  finish<ActionT>(goal_handle, result);
+}
 
+template <typename ActionT>
+void MotionServer::finish(
+  const std::shared_ptr<rclcpp_action::ServerGoalHandle<ActionT>> & goal_handle,
+  const std::shared_ptr<typename ActionT::Result> & result)
+{
   if (result->outcome.code == Outcome::OK)
   {
     goal_handle->succeed(result);
@@ -162,16 +204,256 @@ void MotionServer::execute(
     goal_handle->abort(result);
   }
   std::lock_guard<std::mutex> lock(goal_mutex_);
-  if (active_goal_ == goal_id)
+  if (active_goal_ == goal_handle->get_goal_id())
   {
     active_goal_.reset();
+  }
+}
+
+void MotionServer::execute_follow(
+  const std::shared_ptr<rclcpp_action::ServerGoalHandle<Follow>> & goal_handle)
+{
+  std::lock_guard<std::mutex> motion(motion_mutex_);
+  const auto goal = goal_handle->get_goal();
+  const auto goal_id = goal_handle->get_goal_id();
+  auto result = std::make_shared<Follow::Result>();
+  auto feedback = std::make_shared<Follow::Feedback>();
+  const std::function<bool()> interrupted = [this, goal_handle, goal_id]
+  { return goal_handle->is_canceling() || !is_active(goal_id); };
+  CartesianStreamer * moving = nullptr;  // set once the arm is commanded
+  const auto stop = [this, &moving, &result](uint8_t code, const std::string & message)
+  {
+    if (moving && !halt(*moving))
+    {
+      result->outcome =
+        make_outcome(Outcome::EXECUTION_FAILED, message + ", but the arm did not come to rest");
+      return;
+    }
+    result->outcome = make_outcome(code, message);
+  };
+  try
+  {
+    if (interrupted())
+    {
+      throw Interrupted();
+    }
+    check_speed(goal->speed_scaling);
+    if (goal->target_frame.empty())
+    {
+      throw MotionError(Outcome::INVALID_GOAL, "target_frame is empty");
+    }
+    if (!(goal->target_timeout > 0.0))
+    {
+      throw MotionError(Outcome::INVALID_GOAL, "target_timeout must be > 0");
+    }
+    if (goal->follow_orientation)
+    {
+      throw MotionError(Outcome::UNSUPPORTED, "follow_orientation: position only for now");
+    }
+    check_robot_mode();
+    auto & stream = streamer();
+    follow(
+      *goal, stream, interrupted, [&moving, &stream] { moving = &stream; },
+      [&feedback, &goal_handle](float distance)
+      {
+        feedback->distance = distance;
+        goal_handle->publish_feedback(feedback);
+      });
+  }
+  catch (const Interrupted &)
+  {
+    stop(
+      Outcome::CANCELLED,
+      goal_handle->is_canceling() ? "cancelled by the client" : "replaced by a newer goal");
+  }
+  catch (const MotionError & e)
+  {
+    auto code = e.code();
+    std::string message = e.what();
+    if (code == Outcome::EXECUTION_FAILED && robot_mode_)
+    {
+      if (const auto error = robot_mode_->error())
+      {
+        code = Outcome::ROBOT_ERROR;
+        message = *error;
+      }
+    }
+    stop(code, message);
+  }
+  catch (const std::exception & e)
+  {
+    stop(Outcome::EXECUTION_FAILED, e.what());
+  }
+  finish<Follow>(goal_handle, result);
+}
+
+void MotionServer::follow(
+  const Follow::Goal & goal, CartesianStreamer & streamer,
+  const std::function<bool()> & interrupted, const std::function<void()> & on_started,
+  const std::function<void(float)> & on_distance)
+{
+  FollowGains gains = follow_gains_;
+  gains.max_speed *= goal.speed_scaling;
+  gains.max_rotation_speed *= goal.speed_scaling;
+  const Eigen::Isometry3d offset = to_eigen(goal.offset);
+
+  geometry_msgs::msg::TransformStamped target;
+  try
+  {
+    target = tf_buffer_->lookupTransform(BASE_FRAME, goal.target_frame, tf2::TimePointZero);
+  }
+  catch (const tf2::TransformException & e)
+  {
+    throw MotionError(
+      Outcome::NOT_FOUND, "target frame '" + goal.target_frame + "' not in TF: " + e.what());
+  }
+  // follow_orientation false: the TCP keeps the orientation it has now.
+  const Eigen::Matrix3d orientation = lookup(TCP_FRAME).linear();
+
+  VelocityEstimator target_velocity(follow_velocity_time_constant_);
+  streamer.start();
+  on_started();
+  const auto period = rclcpp::Duration::from_seconds(streamer.period());
+  auto next = node_->now();
+  auto target_seen = next;  // last time the target had a new sample
+  auto feedback_due = next;
+  auto last_status = StreamStatus::Code::OK;
+  while (true)
+  {
+    if (interrupted())
+    {
+      throw Interrupted();
+    }
+    check_robot_mode();
+
+    try
+    {
+      target = tf_buffer_->lookupTransform(BASE_FRAME, goal.target_frame, tf2::TimePointZero);
+    }
+    catch (const tf2::TransformException &)
+    {
+      throw MotionError(Outcome::NOT_FOUND, "target frame '" + goal.target_frame + "' lost");
+    }
+    const Eigen::Isometry3d target_pose = to_eigen(target.transform);
+    // Stamp 0: a static frame, always current. Otherwise the target's own stamps count, so
+    // the target may run on another clock (the hand simulation does).
+    const double stamp = rclcpp::Time(target.header.stamp).seconds();
+    const auto now = node_->now();
+    if (stamp == 0.0 || target_velocity.update(stamp, target_pose.translation()))
+    {
+      target_seen = now;
+    }
+    else if ((now - target_seen).seconds() > goal.target_timeout)
+    {
+      throw MotionError(
+        Outcome::NOT_FOUND, "target frame '" + goal.target_frame + "' not updated for " +
+                              std::to_string(goal.target_timeout) + " s");
+    }
+
+    Eigen::Isometry3d goal_pose = target_pose * offset;
+    goal_pose.linear() = orientation;
+    const Eigen::Isometry3d tcp = lookup(TCP_FRAME);
+    const auto status =
+      streamer.step(follow_twist(tcp, goal_pose, target_velocity.velocity(), gains));
+    if (status.code == StreamStatus::Code::INVALID)
+    {
+      throw MotionError(Outcome::EXECUTION_FAILED, "Cartesian stream: " + status.message);
+    }
+    if (status.code != last_status)
+    {
+      RCLCPP_INFO(node_->get_logger(), "follow: %s", status.message.c_str());
+      last_status = status.code;
+    }
+    if (now >= feedback_due)
+    {
+      on_distance(static_cast<float>((goal_pose.translation() - tcp.translation()).norm()));
+      feedback_due = now + rclcpp::Duration::from_seconds(follow_feedback_period_);
+    }
+
+    next += period;
+    if (node_->now() - next > period)
+    {
+      next = node_->now();  // fell behind: do not try to catch up
+    }
+    sleep_until(next);
+  }
+}
+
+CartesianStreamer & MotionServer::streamer()
+{
+  if (!streamer_)
+  {
+    if (!make_streamer_)
+    {
+      throw MotionError(Outcome::UNSUPPORTED, "no Cartesian streamer configured");
+    }
+    try
+    {
+      streamer_ = make_streamer_();
+    }
+    catch (const std::exception & e)
+    {
+      throw MotionError(Outcome::UNSUPPORTED, std::string("Cartesian streamer: ") + e.what());
+    }
+  }
+  return *streamer_;
+}
+
+bool MotionServer::halt(CartesianStreamer & streamer)
+{
+  try
+  {
+    const auto period = rclcpp::Duration::from_seconds(streamer.period());
+    const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::duration<double>(rest_timeout_);
+    auto next = node_->now();
+    while (!streamer.halt())
+    {
+      if (std::chrono::steady_clock::now() > deadline)
+      {
+        return false;
+      }
+      next += period;
+      sleep_until(next);
+    }
+  }
+  catch (const std::exception & e)
+  {
+    RCLCPP_ERROR(node_->get_logger(), "follow: stopping failed: %s", e.what());
+    return false;
+  }
+  return wait_for_rest();
+}
+
+void MotionServer::sleep_until(const rclcpp::Time & time)
+{
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (rclcpp::ok() && node_->now() < time)
+  {
+    if (std::chrono::steady_clock::now() > deadline)
+    {
+      throw MotionError(Outcome::TIMEOUT, "the clock stopped advancing");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+}
+
+Eigen::Isometry3d MotionServer::lookup(const std::string & frame) const
+{
+  try
+  {
+    return to_eigen(tf_buffer_->lookupTransform(BASE_FRAME, frame, tf2::TimePointZero).transform);
+  }
+  catch (const tf2::TransformException & e)
+  {
+    throw MotionError(Outcome::EXECUTION_FAILED, "no TF base -> " + frame + ": " + e.what());
   }
 }
 
 MotionServer::MotionServer(
   const rclcpp::Node::SharedPtr & node, WorldModelClient & world_model,
   MoveGroupClient & move_group, const RobotModeMonitor * robot_mode,
-  const rclcpp::CallbackGroup::SharedPtr & group)
+  const rclcpp::CallbackGroup::SharedPtr & group, StreamerFactory make_streamer)
 : node_(node),
   world_model_(world_model),
   move_group_(move_group),
@@ -181,6 +463,13 @@ MotionServer::MotionServer(
   rest_velocity_(node->declare_parameter("rest_velocity", 0.01)),
   rest_timeout_(node->declare_parameter("rest_timeout", 3.0)),
   startup_timeout_(node->declare_parameter("startup_timeout", 10.0)),
+  follow_gains_{
+    node->declare_parameter("follow_gain", 2.0), node->declare_parameter("follow_max_speed", 0.25),
+    node->declare_parameter("follow_rotation_gain", 2.0),
+    node->declare_parameter("follow_max_rotation_speed", 0.5)},
+  follow_velocity_time_constant_(node->declare_parameter("follow_velocity_time_constant", 0.05)),
+  follow_feedback_period_(node->declare_parameter("follow_feedback_period", 0.1)),
+  make_streamer_(std::move(make_streamer)),
   startup_begin_(std::chrono::steady_clock::now())
 {
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node->get_clock());
@@ -195,6 +484,7 @@ MotionServer::MotionServer(
 
   pose_server_ = create_action<MoveToPose>("/motion/move_to_pose");
   joints_server_ = create_action<MoveToJoints>("/motion/move_to_joints");
+  follow_server_ = create_action<Follow>("/motion/follow");
   reachable_service_ = node->create_service<CheckReachable>(
     "/motion/check_reachable",
     [this](
