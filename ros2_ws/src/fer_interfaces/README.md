@@ -14,6 +14,7 @@ renumbering a constant is a breaking change.
 |---|---|---|---|---|
 | `MoveToPose` | action | `/motion/move_to_pose` | motion backend | BT |
 | `MoveToJoints` | action | `/motion/move_to_joints` | motion backend | BT |
+| `Follow` | action | `/motion/follow` | motion backend | BT |
 | `CheckReachable` | service | `/motion/check_reachable` | motion backend | BT |
 | `MoveGripper` | action | `/gripper/move` | `fer_gripper_server` | BT |
 | `Grasp` | action | `/gripper/grasp` | `fer_gripper_server` | BT |
@@ -57,6 +58,8 @@ Servers reject what the message types cannot exclude:
 | `speed_scaling` in (0, 1] | motion backend | `INVALID_GOAL` |
 | gripper width in [0, 0.08] m | gripper server | `INVALID_GOAL` |
 | pose frame unknown to TF | motion backend, grasp planner (place target) | `INVALID_GOAL` |
+| `Follow`: `target_timeout` not > 0 | motion backend | `INVALID_GOAL` |
+| `Follow`: `follow_orientation` true (position only for now) | motion backend | `UNSUPPORTED` |
 | unknown object id | motion backend, gripper server, world model, grasp planner | `NOT_FOUND` |
 | `Grasp` on a non-FREE object, `Release` on a non-GRASPED object, `RefineObject` on a GRASPED object, `GetGraspCandidates` on a non-FREE or fixed object, `GetPlaceCandidates` on a non-GRASPED object | gripper server, world model, grasp planner | `INVALID_STATE` |
 
@@ -85,6 +88,11 @@ Every implementation of an interface passes the contract test of its server pack
   turned 180° about the vertical.
 - **CheckReachable:** plans the chained targets without moving; the first starts at the
   current state. Returns the joint configuration at each target.
+- **Follow:** the exception to the frame rule above. `target_frame` is looked up in TF in
+  every control cycle, so the TCP follows the frame while it moves. The goal has no end of
+  its own: it runs until it is cancelled or replaced (`CANCELLED` once the arm is at rest,
+  the normal end), or until the target is lost. A target that does not exist at goal start,
+  or that is older than `target_timeout`, stops the arm and ends `NOT_FOUND`.
 - **Motion outcomes:** the world model or the planner not answering → `TIMEOUT`; a failed
   execution (e.g. an inactive controller) → `EXECUTION_FAILED`; the arm in reflex or user
   stop → `ROBOT_ERROR`.

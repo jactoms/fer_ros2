@@ -32,6 +32,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/QueryObjects.srv"
   "srv/SetObjectStatus.srv"
   "action/DetectObjects.action"
+  "action/Follow.action"
   "action/Grasp.action"
   "action/MoveGripper.action"
   "action/MoveToJoints.action"
