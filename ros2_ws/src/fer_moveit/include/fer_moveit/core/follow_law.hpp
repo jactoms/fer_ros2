@@ -24,22 +24,10 @@ struct Workspace
 
   /// \throw std::invalid_argument unless both have 3 values and min < max on every axis.
   static Workspace from(const std::vector<double> & min, const std::vector<double> & max);
-};
 
-/// \brief A goal point after clamp_to_workspace().
-struct ClampedGoal
-{
-  Eigen::Vector3d position;  ///< inside the workspace
-  Eigen::Vector3d velocity;  ///< goal velocity, zero on every clamped axis
-  bool clamped;              ///< true if any axis was clamped
+  /// \brief True if \p point is inside the box or on its wall.
+  bool contains(const Eigen::Vector3d & point) const;
 };
-
-/// \brief Clamp \p position into \p workspace.
-///
-/// On a clamped axis the goal velocity is dropped too, so the TCP rests at the wall instead of
-/// pushing against it with the feedforward.
-ClampedGoal clamp_to_workspace(
-  const Eigen::Vector3d & position, const Eigen::Vector3d & velocity, const Workspace & workspace);
 
 /// \brief TCP velocity (base frame) that brings \p tcp to \p goal while the goal moves.
 ///

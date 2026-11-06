@@ -8,9 +8,11 @@ fer_hand_mjc:
     publish_rate_hz: 100.0
     viewer: true                  # false: headless (no window)
     motion: sine                  # static | sine | random; /hand_mjc/target overrides it
-    start_position: [0.5, 0.0, 0.5]
-    sine_amplitude: [0.1, 0.3, 0.15]  # sine: +- around start_position
-    sine_frequency: 0.08              # sine: Hz (peak hand speed ~0.18 m/s)
-    random_range: [0.25, 0.35, 0.2]   # random: waypoints within start_position +- this
+    # Handover height: the gripper, 10 cm above the hand, stays in the /motion/follow
+    # workspace of fer_moveit (z <= 0.50).
+    start_position: [0.45, 0.0, 0.35]
+    sine_amplitude: [0.1, 0.25, 0.04] # sine: +- around start_position
+    sine_frequency: 0.08              # sine: Hz (peak hand speed ~0.14 m/s)
+    random_range: [0.1, 0.25, 0.04]   # random: waypoints within start_position +- this
     random_speed: 0.1                 # random: m/s
     random_seed: 0                    # random: same seed, same path

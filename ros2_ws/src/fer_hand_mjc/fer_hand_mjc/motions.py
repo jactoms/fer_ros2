@@ -26,10 +26,10 @@ class HandMotion:
     def __init__(
         self,
         motion: str = 'sine',
-        start: Sequence[float] = (0.5, 0.0, 0.5),
-        sine_amplitude: Sequence[float] = (0.1, 0.3, 0.15),
+        start: Sequence[float] = (0.45, 0.0, 0.35),
+        sine_amplitude: Sequence[float] = (0.1, 0.25, 0.04),
         sine_frequency: float = 0.08,
-        random_range: Sequence[float] = (0.25, 0.35, 0.2),
+        random_range: Sequence[float] = (0.1, 0.25, 0.04),
         random_speed: float = 0.1,
         random_seed: int = 0,
     ) -> None:

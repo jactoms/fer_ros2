@@ -43,10 +43,10 @@ class HandMjc:
         p('publish_rate_hz', 100.0)
         p('viewer', True)
         p('motion', 'sine')
-        p('start_position', [0.5, 0.0, 0.5])
-        p('sine_amplitude', [0.1, 0.3, 0.15])
+        p('start_position', [0.45, 0.0, 0.35])
+        p('sine_amplitude', [0.1, 0.25, 0.04])
         p('sine_frequency', 0.08)
-        p('random_range', [0.25, 0.35, 0.2])
+        p('random_range', [0.1, 0.25, 0.04])
         p('random_speed', 0.1)
         p('random_seed', 0)
 

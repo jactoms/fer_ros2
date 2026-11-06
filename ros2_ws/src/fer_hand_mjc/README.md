@@ -10,7 +10,7 @@ container, so every node on the DDS domain sees its topics.
 | File | Content |
 |---|---|
 | `hand_mjc_world.xml` | World: physics options, view, floor, light, origin axes (0, 0, 0; x red, y green, z blue, 0.2 m) |
-| `hand_scene.xml` | Includes the world; body `hand` (sphere, radius 0.04 m, skin colour) at (0.5, 0, 0.5) |
+| `hand_scene.xml` | Includes the world; body `hand` (sphere, radius 0.04 m, skin colour) at (0.45, 0, 0.35) |
 
 The hand is a mocap body: the node places it every physics step, no forces act on it, and it
 does not collide. The positions published are read back from MuJoCo (`xpos`).
@@ -30,9 +30,13 @@ does not collide. The positions published are read back from MuJoCo (`xpos`).
 
 | Motion | Movement (defaults) | Parameters |
 |---|---|---|
-| `static` | Holds `start_position` (0.5, 0, 0.5) | |
-| `sine` | Oscillates around it: ±0.10 / ±0.30 / ±0.15 m in x / y / z at 0.08 Hz (12.5 s period, peak speed 0.18 m/s) | `sine_amplitude`, `sine_frequency` |
-| `random` | Moves at 0.1 m/s to random waypoints in the box `start_position` ± (0.25, 0.35, 0.2) m, a new one on arrival | `random_range`, `random_speed`, `random_seed` (same seed, same path) |
+| `static` | Holds `start_position` (0.45, 0, 0.35) | |
+| `sine` | Oscillates around it: ±0.10 / ±0.25 / ±0.04 m in x / y / z at 0.08 Hz (12.5 s period, peak speed 0.14 m/s) | `sine_amplitude`, `sine_frequency` |
+| `random` | Moves at 0.1 m/s to random waypoints in the box `start_position` ± (0.10, 0.25, 0.04) m, a new one on arrival | `random_range`, `random_speed`, `random_seed` (same seed, same path) |
+
+The defaults are a handover height: with the gripper 10 cm above the hand (`/motion/follow` with
+`offset: {position: {z: 0.1}}`), the gripper stays inside the Follow workspace of `fer_moveit`
+(z ≤ 0.50 m in `base`); `test/test_motions.py` checks it.
 
 All parameters are in `config/hand_mjc.yaml`.
 
@@ -72,7 +76,7 @@ ros2 launch fer_hand_mjc hand_mjc.launch.py parent_frame:='' rviz:=true
 ros2 topic echo /hand_mjc/position --field point
 ros2 topic hz /hand_mjc/position
 ros2 topic pub --once /hand_mjc/target geometry_msgs/msg/PointStamped \
-  "{header: {frame_id: world}, point: {x: 0.4, y: 0.2, z: 0.6}}"
+  "{header: {frame_id: world}, point: {x: 0.4, y: 0.2, z: 0.35}}"
 ```
 
 Launch arguments: `motion`, `viewer`, `parent_frame` (default `base`; `''` for none), `rviz`

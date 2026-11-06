@@ -93,8 +93,9 @@ Every implementation of an interface passes the contract test of its server pack
   its own: it runs until it is cancelled or replaced (`CANCELLED` once the arm is at rest,
   the normal end), or until the target is lost. A target that does not exist at goal start,
   or that is older than `target_timeout`, stops the arm and ends `NOT_FOUND`. The backend
-  keeps the commanded point inside its workspace: for a target outside it, the TCP waits at
-  the workspace wall, and the feedback `distance` stays the distance to the real target. If
+  follows only while the goal (target · `offset`) is inside its workspace; outside it, the TCP
+  holds where the goal left (it never moves along the edge towards the target), and the
+  feedback `distance` stays the distance to the real goal. If
   the arm cannot move on for the backend's halt timeout (e.g. at a singularity, a joint
   limit or a collision), the arm stops and the goal ends `UNREACHABLE`; a planned move
   (`MoveToJoints`) can free it.

@@ -308,7 +308,8 @@ void MotionServer::follow(
       Outcome::NOT_FOUND, "target frame '" + goal.target_frame + "' not in TF: " + e.what());
   }
   // follow_orientation false: the TCP keeps the orientation it has now.
-  const Eigen::Matrix3d orientation = lookup(TCP_FRAME).linear();
+  const Eigen::Isometry3d start = lookup(TCP_FRAME);
+  const Eigen::Matrix3d orientation = start.linear();
 
   VelocityEstimator target_velocity(follow_velocity_time_constant_);
   streamer.start();
@@ -318,8 +319,9 @@ void MotionServer::follow(
   auto target_seen = next;  // last time the target had a new sample
   auto feedback_due = next;
   auto last_status = StreamStatus::Code::OK;
-  std::optional<rclcpp::Time> halted_since;  // the stream has reported HALTED since then
-  bool clamped = false;
+  std::optional<rclcpp::Time> halted_since;    // the stream has reported HALTED since then
+  Eigen::Vector3d held = start.translation();  // last goal inside the workspace
+  bool holding = false;
   while (true)
   {
     if (interrupted())
@@ -354,21 +356,28 @@ void MotionServer::follow(
 
     Eigen::Isometry3d goal_pose = target_pose * offset;
     goal_pose.linear() = orientation;
-    // Keep the commanded goal in the workspace, away from the arm's singular regions.
-    const auto kept =
-      clamp_to_workspace(goal_pose.translation(), target_velocity.velocity(), follow_workspace_);
-    if (kept.clamped != clamped)
+    // Follow only while the goal is in the workspace, away from the arm's singular regions.
+    // Outside it, hold the last goal that was inside and wait: sliding along the wall instead
+    // could bring the TCP onto the target (a goal above the hand, held at the box top, would
+    // be at the hand).
+    const bool inside = follow_workspace_.contains(goal_pose.translation());
+    if (inside)
+    {
+      held = goal_pose.translation();
+    }
+    if (inside == holding)
     {
       RCLCPP_INFO(
         node_->get_logger(), "follow: %s",
-        kept.clamped ? "target outside the workspace, waiting at its wall"
-                     : "target inside the workspace again");
-      clamped = kept.clamped;
+        inside ? "goal inside the workspace again" : "goal outside the workspace, holding");
+      holding = !inside;
     }
     Eigen::Isometry3d command = goal_pose;
-    command.translation() = kept.position;
+    command.translation() = held;
+    const Eigen::Vector3d velocity =
+      inside ? target_velocity.velocity() : Eigen::Vector3d::Zero().eval();
     const Eigen::Isometry3d tcp = lookup(TCP_FRAME);
-    const auto status = streamer.step(follow_twist(tcp, command, kept.velocity, gains));
+    const auto status = streamer.step(follow_twist(tcp, command, velocity, gains));
     if (status.code == StreamStatus::Code::INVALID)
     {
       throw MotionError(Outcome::EXECUTION_FAILED, "Cartesian stream: " + status.message);

@@ -4,7 +4,7 @@
 
   <worldbody>
     <!-- The hand is a sphere (radius 0.04 m); its centre is the published position. -->
-    <body name="hand" mocap="true" pos="0.5 0.0 0.5">
+    <body name="hand" mocap="true" pos="0.45 0.0 0.35">
       <geom name="hand_sphere" type="sphere" size="0.04" material="skin"
             contype="0" conaffinity="0"/>
     </body>

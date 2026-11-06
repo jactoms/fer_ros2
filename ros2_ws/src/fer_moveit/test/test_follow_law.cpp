@@ -70,23 +70,19 @@ TEST(FollowLaw, AngularSpeedIsCapped)
   EXPECT_GT(twist(3), 0.0);
 }
 
-TEST(Workspace, InsideTheBoxNothingChanges)
+TEST(Workspace, ContainsItsInsideAndItsWall)
 {
-  const auto box = Workspace::from({0.25, -0.3, 0.25}, {0.65, 0.3, 0.55});
-  const auto goal = clamp_to_workspace({0.4, 0.1, 0.5}, {0.1, 0.2, 0.3}, box);
-  EXPECT_FALSE(goal.clamped);
-  EXPECT_TRUE(goal.position.isApprox(Eigen::Vector3d(0.4, 0.1, 0.5)));
-  EXPECT_TRUE(goal.velocity.isApprox(Eigen::Vector3d(0.1, 0.2, 0.3)));
+  const auto box = Workspace::from({0.25, -0.3, 0.25}, {0.6, 0.3, 0.5});
+  EXPECT_TRUE(box.contains({0.4, 0.1, 0.4}));
+  EXPECT_TRUE(box.contains({0.6, -0.3, 0.5}));  // a corner
 }
 
-TEST(Workspace, OutsideTheGoalIsHeldAtTheWallWithoutItsVelocityThere)
+TEST(Workspace, DoesNotContainWhatIsOutsideOnAnyAxis)
 {
-  const auto box = Workspace::from({0.25, -0.3, 0.25}, {0.65, 0.3, 0.55});
-  // Too high and too far left; x is inside.
-  const auto goal = clamp_to_workspace({0.4, 0.5, 0.9}, {0.1, 0.2, 0.3}, box);
-  EXPECT_TRUE(goal.clamped);
-  EXPECT_TRUE(goal.position.isApprox(Eigen::Vector3d(0.4, 0.3, 0.55)));
-  EXPECT_TRUE(goal.velocity.isApprox(Eigen::Vector3d(0.1, 0.0, 0.0)));  // x still followed
+  const auto box = Workspace::from({0.25, -0.3, 0.25}, {0.6, 0.3, 0.5});
+  EXPECT_FALSE(box.contains({0.7, 0.0, 0.4}));
+  EXPECT_FALSE(box.contains({0.4, -0.31, 0.4}));
+  EXPECT_FALSE(box.contains({0.4, 0.0, 0.51}));
 }
 
 TEST(Workspace, RejectsABoxThatIsNotOne)

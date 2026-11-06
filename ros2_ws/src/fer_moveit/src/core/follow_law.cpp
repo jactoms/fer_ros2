@@ -31,19 +31,9 @@ Workspace Workspace::from(const std::vector<double> & min, const std::vector<dou
   return workspace;
 }
 
-ClampedGoal clamp_to_workspace(
-  const Eigen::Vector3d & position, const Eigen::Vector3d & velocity, const Workspace & workspace)
+bool Workspace::contains(const Eigen::Vector3d & point) const
 {
-  ClampedGoal goal{position.cwiseMax(workspace.min).cwiseMin(workspace.max), velocity, false};
-  for (Eigen::Index i = 0; i < 3; ++i)
-  {
-    if (goal.position(i) != position(i))
-    {
-      goal.velocity(i) = 0.0;
-      goal.clamped = true;
-    }
-  }
-  return goal;
+  return (point.array() >= min.array()).all() && (point.array() <= max.array()).all();
 }
 
 Eigen::Matrix<double, 6, 1> follow_twist(

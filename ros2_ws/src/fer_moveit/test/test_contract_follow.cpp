@@ -230,22 +230,42 @@ TEST_F(FollowContract, InvalidStreamIsExecutionFailedAndTheArmStops)
   EXPECT_GE(halts(), 1);
 }
 
-TEST_F(FollowContract, GoalOutsideTheWorkspaceIsHeldAtItsWall)
+TEST_F(FollowContract, GoalOutsideTheWorkspaceFromTheStartHoldsTheArm)
 {
   start_follow();
   auto handle = send_follow(follow_goal("high"));
   auto result = follow_client_->async_get_result(handle);
   ASSERT_TRUE(streaming(20));
 
-  // Goal (0.4, 0, 0.9) is held at z 0.50, the TCP's height: error (0.1, 0, 0), gain 2 ->
-  // 0.2 m/s, capped at 0.125 m/s. Unclamped it would point mostly up, along (0.1, 0, 0.4).
-  const auto twist = streamer_.load()->last_twist();
-  EXPECT_NEAR(twist(0), 0.125, 1e-6);
-  EXPECT_NEAR(twist(1), 0.0, 1e-6);
-  EXPECT_NEAR(twist(2), 0.0, 1e-6);
+  // (0.4, 0, 0.9) is above the box (z <= 0.50): the TCP holds where it started.
+  EXPECT_NEAR(streamer_.load()->last_twist().norm(), 0.0, 1e-6);
   // The feedback is the distance to the real goal, so it shows the goal is out of reach.
   ASSERT_TRUE(wait_until([this] { return distance_.load() >= 0.0f; }));
   EXPECT_NEAR(distance_.load(), std::hypot(0.1, 0.4), 1e-4);
+
+  follow_client_->async_cancel_goal(handle);
+  ASSERT_TRUE(wait(result));
+  EXPECT_EQ(result.get().result->outcome.code, Outcome::CANCELLED);
+}
+
+TEST_F(FollowContract, GoalThatLeavesTheWorkspaceIsHeldWhereItLeft)
+{
+  start_follow();
+  auto goal = follow_goal();
+  goal.speed_scaling = 1.0;
+  auto handle = send_follow(goal);
+  auto result = follow_client_->async_get_result(handle);
+  ASSERT_TRUE(streaming(20));
+  EXPECT_NEAR(streamer_.load()->last_twist()(0), 0.2, 1e-6);  // 2/s * 0.1 m to (0.4, 0, 0.5)
+
+  // The target jumps to (0.5, 0, 0.9), above the box. Sliding along the wall would aim at
+  // (0.5, 0, 0.5) (0.25 m/s after the cap); holding keeps aiming at (0.4, 0, 0.5).
+  frames_->sendTransform(frame(fakes_, "goal", 0.5, 0.0, 0.9));
+  ASSERT_TRUE(wait_until([this] { return distance_.load() > 0.4f; }));
+  ASSERT_TRUE(streaming(streamer_.load()->steps.load() + 5));
+  const auto twist = streamer_.load()->last_twist();
+  EXPECT_NEAR(twist(0), 0.2, 1e-6);
+  EXPECT_NEAR(twist(2), 0.0, 1e-6);
 
   follow_client_->async_cancel_goal(handle);
   ASSERT_TRUE(wait(result));
