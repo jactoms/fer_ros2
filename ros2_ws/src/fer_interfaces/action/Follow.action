@@ -9,6 +9,7 @@ float64 speed_scaling 0.3           # (0, 1]
 float64 target_timeout 0.5          # s; target older than this: the arm stops, NOT_FOUND
 ---
 Outcome outcome                     # CANCELLED (the normal end), INVALID_GOAL, UNSUPPORTED,
-                                    # NOT_FOUND, EXECUTION_FAILED, ROBOT_ERROR
+                                    # NOT_FOUND, UNREACHABLE (arm halted, e.g. singularity),
+                                    # EXECUTION_FAILED, ROBOT_ERROR
 ---
 float32 distance                    # m, TCP position to its target position

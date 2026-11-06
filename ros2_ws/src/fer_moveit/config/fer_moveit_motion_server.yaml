@@ -17,6 +17,11 @@ fer_moveit_motion_server:
     follow_max_rotation_speed: 0.5      # rad/s at speed_scaling 1
     follow_velocity_time_constant: 0.05 # s, low-pass of the target velocity estimate
     follow_feedback_period: 0.1         # s
+    # Box in base the goal is kept in, away from singular regions. MuJoCo, 6 Nov: every corner
+    # reached (far high corners slowed by Servo, 3-12 mm short); x 0.65 / z 0.55 halted.
+    follow_workspace_min: [0.25, -0.30, 0.25]  # m
+    follow_workspace_max: [0.60, 0.30, 0.50]   # m
+    follow_halt_timeout: 1.0            # s, stream halted this long: end with UNREACHABLE
 
     # /motion/follow: MoveIt Servo, run as a library (adapters/servo_streamer).
     moveit_servo:

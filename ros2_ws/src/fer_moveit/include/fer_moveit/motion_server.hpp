@@ -113,6 +113,8 @@ private:
   FollowGains follow_gains_;
   double follow_velocity_time_constant_;
   double follow_feedback_period_;
+  Workspace follow_workspace_;
+  double follow_halt_timeout_;
 
   StreamerFactory make_streamer_;
   std::unique_ptr<CartesianStreamer> streamer_;

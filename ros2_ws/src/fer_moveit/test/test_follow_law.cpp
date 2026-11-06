@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <stdexcept>
 
 #include "fer_moveit/core/follow_law.hpp"
 
@@ -67,6 +68,31 @@ TEST(FollowLaw, AngularSpeedIsCapped)
   const auto twist = follow_twist(at(0, 0, 0), goal, Eigen::Vector3d::Zero(), {});
   EXPECT_NEAR(twist.tail<3>().norm(), 0.5, 1e-12);
   EXPECT_GT(twist(3), 0.0);
+}
+
+TEST(Workspace, InsideTheBoxNothingChanges)
+{
+  const auto box = Workspace::from({0.25, -0.3, 0.25}, {0.65, 0.3, 0.55});
+  const auto goal = clamp_to_workspace({0.4, 0.1, 0.5}, {0.1, 0.2, 0.3}, box);
+  EXPECT_FALSE(goal.clamped);
+  EXPECT_TRUE(goal.position.isApprox(Eigen::Vector3d(0.4, 0.1, 0.5)));
+  EXPECT_TRUE(goal.velocity.isApprox(Eigen::Vector3d(0.1, 0.2, 0.3)));
+}
+
+TEST(Workspace, OutsideTheGoalIsHeldAtTheWallWithoutItsVelocityThere)
+{
+  const auto box = Workspace::from({0.25, -0.3, 0.25}, {0.65, 0.3, 0.55});
+  // Too high and too far left; x is inside.
+  const auto goal = clamp_to_workspace({0.4, 0.5, 0.9}, {0.1, 0.2, 0.3}, box);
+  EXPECT_TRUE(goal.clamped);
+  EXPECT_TRUE(goal.position.isApprox(Eigen::Vector3d(0.4, 0.3, 0.55)));
+  EXPECT_TRUE(goal.velocity.isApprox(Eigen::Vector3d(0.1, 0.0, 0.0)));  // x still followed
+}
+
+TEST(Workspace, RejectsABoxThatIsNotOne)
+{
+  EXPECT_THROW(Workspace::from({0.0, 0.0}, {1.0, 1.0, 1.0}), std::invalid_argument);
+  EXPECT_THROW(Workspace::from({0.0, 0.0, 0.5}, {1.0, 1.0, 0.5}), std::invalid_argument);
 }
 
 TEST(VelocityEstimator, ZeroUntilTwoSamples)

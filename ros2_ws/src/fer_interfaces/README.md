@@ -92,7 +92,12 @@ Every implementation of an interface passes the contract test of its server pack
   every control cycle, so the TCP follows the frame while it moves. The goal has no end of
   its own: it runs until it is cancelled or replaced (`CANCELLED` once the arm is at rest,
   the normal end), or until the target is lost. A target that does not exist at goal start,
-  or that is older than `target_timeout`, stops the arm and ends `NOT_FOUND`.
+  or that is older than `target_timeout`, stops the arm and ends `NOT_FOUND`. The backend
+  keeps the commanded point inside its workspace: for a target outside it, the TCP waits at
+  the workspace wall, and the feedback `distance` stays the distance to the real target. If
+  the arm cannot move on for the backend's halt timeout (e.g. at a singularity, a joint
+  limit or a collision), the arm stops and the goal ends `UNREACHABLE`; a planned move
+  (`MoveToJoints`) can free it.
 - **Motion outcomes:** the world model or the planner not answering → `TIMEOUT`; a failed
   execution (e.g. an inactive controller) → `EXECUTION_FAILED`; the arm in reflex or user
   stop → `ROBOT_ERROR`.

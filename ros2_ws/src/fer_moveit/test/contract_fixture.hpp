@@ -69,6 +69,7 @@ protected:
       {"move_group_timeout", 1.5},
       {"rest_timeout", 2.0},
       {"startup_timeout", 10.0},
+      {"follow_halt_timeout", 0.3},
     });
     node_ = std::make_shared<rclcpp::Node>("fer_moveit_motion_server", options);
     fakes_ = std::make_shared<rclcpp::Node>("contract_fakes");

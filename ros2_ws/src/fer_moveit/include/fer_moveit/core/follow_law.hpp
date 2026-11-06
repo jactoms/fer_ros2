@@ -2,6 +2,7 @@
 #define FER_MOVEIT__CORE__FOLLOW_LAW_HPP_
 
 #include <Eigen/Geometry>
+#include <vector>
 
 namespace fer_moveit
 {
@@ -14,6 +15,31 @@ struct FollowGains
   double rotation_gain{2.0};       ///< 1/s, orientation error -> TCP angular velocity
   double max_rotation_speed{0.5};  ///< rad/s, cap of the TCP angular speed
 };
+
+/// \brief Axis-aligned box (base frame) the follow goal is kept in.
+struct Workspace
+{
+  Eigen::Vector3d min;
+  Eigen::Vector3d max;
+
+  /// \throw std::invalid_argument unless both have 3 values and min < max on every axis.
+  static Workspace from(const std::vector<double> & min, const std::vector<double> & max);
+};
+
+/// \brief A goal point after clamp_to_workspace().
+struct ClampedGoal
+{
+  Eigen::Vector3d position;  ///< inside the workspace
+  Eigen::Vector3d velocity;  ///< goal velocity, zero on every clamped axis
+  bool clamped;              ///< true if any axis was clamped
+};
+
+/// \brief Clamp \p position into \p workspace.
+///
+/// On a clamped axis the goal velocity is dropped too, so the TCP rests at the wall instead of
+/// pushing against it with the feedforward.
+ClampedGoal clamp_to_workspace(
+  const Eigen::Vector3d & position, const Eigen::Vector3d & velocity, const Workspace & workspace);
 
 /// \brief TCP velocity (base frame) that brings \p tcp to \p goal while the goal moves.
 ///

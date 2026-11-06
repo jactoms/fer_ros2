@@ -318,6 +318,8 @@ void MotionServer::follow(
   auto target_seen = next;  // last time the target had a new sample
   auto feedback_due = next;
   auto last_status = StreamStatus::Code::OK;
+  std::optional<rclcpp::Time> halted_since;  // the stream has reported HALTED since then
+  bool clamped = false;
   while (true)
   {
     if (interrupted())
@@ -352,9 +354,21 @@ void MotionServer::follow(
 
     Eigen::Isometry3d goal_pose = target_pose * offset;
     goal_pose.linear() = orientation;
+    // Keep the commanded goal in the workspace, away from the arm's singular regions.
+    const auto kept =
+      clamp_to_workspace(goal_pose.translation(), target_velocity.velocity(), follow_workspace_);
+    if (kept.clamped != clamped)
+    {
+      RCLCPP_INFO(
+        node_->get_logger(), "follow: %s",
+        kept.clamped ? "target outside the workspace, waiting at its wall"
+                     : "target inside the workspace again");
+      clamped = kept.clamped;
+    }
+    Eigen::Isometry3d command = goal_pose;
+    command.translation() = kept.position;
     const Eigen::Isometry3d tcp = lookup(TCP_FRAME);
-    const auto status =
-      streamer.step(follow_twist(tcp, goal_pose, target_velocity.velocity(), gains));
+    const auto status = streamer.step(follow_twist(tcp, command, kept.velocity, gains));
     if (status.code == StreamStatus::Code::INVALID)
     {
       throw MotionError(Outcome::EXECUTION_FAILED, "Cartesian stream: " + status.message);
@@ -363,6 +377,22 @@ void MotionServer::follow(
     {
       RCLCPP_INFO(node_->get_logger(), "follow: %s", status.message.c_str());
       last_status = status.code;
+    }
+    // A halt that lasts (e.g. Servo at a singularity: it then blocks every direction) does
+    // not end by itself; give the arm back to the caller, who can recover with a planned move.
+    if (status.code != StreamStatus::Code::HALTED)
+    {
+      halted_since.reset();
+    }
+    else if (!halted_since)
+    {
+      halted_since = now;
+    }
+    else if ((now - *halted_since).seconds() >= follow_halt_timeout_)
+    {
+      throw MotionError(
+        Outcome::UNREACHABLE, "Cartesian stream halted for " +
+                                std::to_string(follow_halt_timeout_) + " s: " + status.message);
     }
     if (now >= feedback_due)
     {
@@ -469,6 +499,10 @@ MotionServer::MotionServer(
     node->declare_parameter("follow_max_rotation_speed", 0.5)},
   follow_velocity_time_constant_(node->declare_parameter("follow_velocity_time_constant", 0.05)),
   follow_feedback_period_(node->declare_parameter("follow_feedback_period", 0.1)),
+  follow_workspace_(Workspace::from(
+    node->declare_parameter("follow_workspace_min", std::vector<double>{0.25, -0.30, 0.25}),
+    node->declare_parameter("follow_workspace_max", std::vector<double>{0.60, 0.30, 0.50}))),
+  follow_halt_timeout_(node->declare_parameter("follow_halt_timeout", 1.0)),
   make_streamer_(std::move(make_streamer)),
   startup_begin_(std::chrono::steady_clock::now())
 {

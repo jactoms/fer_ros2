@@ -1,13 +1,16 @@
 // Contract of /motion/follow: the real MotionServer with a FakeStreamer (no Servo, no arm).
-// The TCP sits still at (0.3, 0, 0.5) in base; the static target "goal" is 10 cm ahead in x.
+// The TCP sits still at (0.3, 0, 0.5) in base; the static target "goal" is 10 cm ahead in x,
+// "high" is above the workspace (default box z <= 0.50). follow_halt_timeout is 0.3 s.
 
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <future>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "contract_fixture.hpp"
 #include "fer_interfaces/action/follow.hpp"
@@ -38,7 +41,7 @@ protected:
     frames_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(fakes_);
     frames_->sendTransform(
       {frame(fakes_, "fer_hand_tcp", 0.3, 0.0, 0.5),
-       frame(fakes_, "goal", 0.4, 0.0, 0.5, goal_yaw_)});
+       frame(fakes_, "goal", 0.4, 0.0, 0.5, goal_yaw_), frame(fakes_, "high", 0.4, 0.0, 0.9)});
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(fakes_->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     ASSERT_TRUE(wait_until([this] { return can_see("fer_hand_tcp") && can_see("goal"); }));
@@ -225,6 +228,61 @@ TEST_F(FollowContract, InvalidStreamIsExecutionFailedAndTheArmStops)
   ASSERT_TRUE(wait(result));
   EXPECT_EQ(result.get().result->outcome.code, Outcome::EXECUTION_FAILED);
   EXPECT_GE(halts(), 1);
+}
+
+TEST_F(FollowContract, GoalOutsideTheWorkspaceIsHeldAtItsWall)
+{
+  start_follow();
+  auto handle = send_follow(follow_goal("high"));
+  auto result = follow_client_->async_get_result(handle);
+  ASSERT_TRUE(streaming(20));
+
+  // Goal (0.4, 0, 0.9) is held at z 0.50, the TCP's height: error (0.1, 0, 0), gain 2 ->
+  // 0.2 m/s, capped at 0.125 m/s. Unclamped it would point mostly up, along (0.1, 0, 0.4).
+  const auto twist = streamer_.load()->last_twist();
+  EXPECT_NEAR(twist(0), 0.125, 1e-6);
+  EXPECT_NEAR(twist(1), 0.0, 1e-6);
+  EXPECT_NEAR(twist(2), 0.0, 1e-6);
+  // The feedback is the distance to the real goal, so it shows the goal is out of reach.
+  ASSERT_TRUE(wait_until([this] { return distance_.load() >= 0.0f; }));
+  EXPECT_NEAR(distance_.load(), std::hypot(0.1, 0.4), 1e-4);
+
+  follow_client_->async_cancel_goal(handle);
+  ASSERT_TRUE(wait(result));
+  EXPECT_EQ(result.get().result->outcome.code, Outcome::CANCELLED);
+}
+
+TEST_F(FollowContract, StreamHaltedTooLongIsUnreachableAndTheArmStops)
+{
+  start_follow();
+  auto handle = send_follow(follow_goal());
+  auto result = follow_client_->async_get_result(handle);
+  ASSERT_TRUE(streaming(5));
+  streamer_.load()->step_code = StreamStatus::Code::HALTED;
+  const auto halted_at = std::chrono::steady_clock::now();
+  ASSERT_TRUE(wait(result));
+  EXPECT_GE(std::chrono::steady_clock::now() - halted_at, 250ms);
+  EXPECT_EQ(result.get().code, rclcpp_action::ResultCode::ABORTED);
+  EXPECT_EQ(result.get().result->outcome.code, Outcome::UNREACHABLE);
+  EXPECT_NE(result.get().result->outcome.message.find("halted"), std::string::npos);
+  EXPECT_GE(halts(), 1);
+}
+
+TEST_F(FollowContract, ShortHaltIsRiddenOut)
+{
+  start_follow();
+  auto handle = send_follow(follow_goal());
+  auto result = follow_client_->async_get_result(handle);
+  ASSERT_TRUE(streaming(5));
+  streamer_.load()->step_code = StreamStatus::Code::HALTED;
+  std::this_thread::sleep_for(100ms);
+  streamer_.load()->step_code = StreamStatus::Code::OK;
+  std::this_thread::sleep_for(500ms);                           // longer than the halt timeout
+  EXPECT_EQ(result.wait_for(0s), std::future_status::timeout);  // still following
+
+  follow_client_->async_cancel_goal(handle);
+  ASSERT_TRUE(wait(result));
+  EXPECT_EQ(result.get().result->outcome.code, Outcome::CANCELLED);
 }
 
 TEST_F(FollowContract, NewGoalReplacesFollow)
