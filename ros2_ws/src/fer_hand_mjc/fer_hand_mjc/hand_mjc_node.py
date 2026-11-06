@@ -1,23 +1,18 @@
 """
 The simulation: a MuJoCo world with a scripted human hand, connected to ROS 2.
 
-The hand (mocap body `body_name`) moves by `motion` (motions.py). Every body listed in
-`commanded_bodies` (mocap bodies, default: tracker) is moved only by ROS commands, so other
-nodes (fer_track_hand) can put their own objects into this one simulation without changing it.
+The hand (mocap body `body_name`) moves by `motion` (motions.py).
 
 Publishes, at publish_rate_hz:
   - /hand_mjc/position         geometry_msgs/PointStamped: hand position read back from MuJoCo
-  - /hand_mjc/<body>/position  geometry_msgs/PointStamped: each commanded body
   - /hand_mjc/clock            rosgraph_msgs/Clock: simulation time (0 at start); not /clock,
                                so it does not clash with another simulation on the domain
-  - /hand_mjc/marker           visualization_msgs/Marker (10 Hz): every body with its MuJoCo
+  - /hand_mjc/marker           visualization_msgs/Marker (10 Hz): the hand with its MuJoCo
                                shape, locked to its TF frame so RViz draws it where TF is
-  - TF                         <frame_id> -> <body> for the hand and each commanded body
+  - TF                         <frame_id> -> <body_name>
 Subscribes:
   - /hand_mjc/target           geometry_msgs/PointStamped: moves the hand there; overrides
                                `motion` from then on
-  - /hand_mjc/<body>/command   geometry_msgs/PointStamped: moves a commanded body there; it
-                               stays at its scene position until the first command
 
 Physics runs in real time (wall clock, mjc_sim.py). With viewer:=true the MuJoCo passive viewer
 shows the scene; closing it leaves the simulation running.
@@ -36,31 +31,14 @@ from visualization_msgs.msg import Marker
 MARKER_HZ = 10.0  # markers are frame-locked; they only need a slow refresh
 
 
-class CommandedBody:
-    """A mocap body moved by /hand_mjc/<name>/command."""
-
-    def __init__(self, sim: RealTimeSim, node: Node, name: str) -> None:
-        self.name = name
-        self.body_id, self.mocap_id = sim.mocap_body(name)
-        self.command = None
-        self.position_pub = node.create_publisher(
-            PointStamped, f'/hand_mjc/{name}/position', 10)
-        node.create_subscription(
-            PointStamped, f'/hand_mjc/{name}/command', self._on_command, 10)
-
-    def _on_command(self, msg: PointStamped) -> None:
-        self.command = [msg.point.x, msg.point.y, msg.point.z]
-
-
 class HandMjc:
-    """Steps the MuJoCo scene, moves the hand and the commanded bodies, publishes them."""
+    """Steps the MuJoCo scene, moves the hand, publishes it."""
 
     def __init__(self, node: Node) -> None:
         self._node = node
         p = node.declare_parameter
         p('model_path', '')
         p('body_name', 'hand')
-        p('commanded_bodies', ['tracker'])
         p('frame_id', 'world')
         p('publish_rate_hz', 100.0)
         p('viewer', True)
@@ -91,8 +69,6 @@ class HandMjc:
         model_path = g('model_path') or share_path('models', 'hand_scene.xml')
         self._sim = RealTimeSim(model_path, self._set_mocap)
         self._body_id, self._mocap_id = self._sim.mocap_body(self._body_name)
-        self._commanded = [
-            CommandedBody(self._sim, node, name) for name in g('commanded_bodies') if name]
         self._target = None
         self._set_mocap()
 
@@ -107,10 +83,9 @@ class HandMjc:
 
         self._sim.start(g('viewer'), node.get_logger())
         node.create_timer(1.0 / rate_hz, self._tick)
-        names = ', '.join(b.name for b in self._commanded) or 'none'
         node.get_logger().info(
             f"hand_mjc: {model_path}, body '{self._body_name}', "
-            f"motion '{self._motion.motion}', commanded bodies: {names}, "
+            f"motion '{self._motion.motion}', "
             f'{rate_hz:.0f} Hz on /hand_mjc/position')
 
     def close(self) -> None:
@@ -127,9 +102,6 @@ class HandMjc:
         else:
             position = self._motion.position(data.time, self._sim.model.opt.timestep)
         data.mocap_pos[self._mocap_id] = position
-        for body in self._commanded:
-            if body.command is not None:
-                data.mocap_pos[body.mocap_id] = body.command
 
     def _tick(self) -> None:
         self._sim.step()
@@ -144,22 +116,17 @@ class HandMjc:
 
         stamp = self._node.get_clock().now().to_msg()
         self._ticks += 1
-        self._publish_body(stamp, self._body_id, self._body_name, self._position_pub, 0)
-        for i, body in enumerate(self._commanded, start=1):
-            self._publish_body(stamp, body.body_id, body.name, body.position_pub, i)
-
-    def _publish_body(self, stamp, body_id: int, name: str, pub, marker_id: int) -> None:
-        x, y, z = self._sim.position(body_id)
+        x, y, z = self._sim.position(self._body_id)
 
         point = PointStamped()
         point.header.stamp = stamp
         point.header.frame_id = self._frame
         point.point.x, point.point.y, point.point.z = x, y, z
-        pub.publish(point)
+        self._position_pub.publish(point)
 
         tf = TransformStamped()
         tf.header = point.header
-        tf.child_frame_id = name
+        tf.child_frame_id = self._body_name
         tf.transform.translation.x = x
         tf.transform.translation.y = y
         tf.transform.translation.z = z
@@ -168,13 +135,13 @@ class HandMjc:
 
         if self._ticks % self._marker_every:
             return
-        kind, extent, rgba = self._sim.shape(body_id)
+        kind, extent, rgba = self._sim.shape(self._body_id)
         marker = Marker()
         marker.header.stamp = stamp
-        marker.header.frame_id = name  # at the body's TF frame, redrawn with every TF update
+        marker.header.frame_id = self._body_name  # at the hand's TF frame, redrawn with TF
         marker.frame_locked = True
         marker.ns = 'hand_mjc'
-        marker.id = marker_id
+        marker.id = 0
         marker.type = Marker.CUBE if kind == 'box' else Marker.SPHERE
         marker.action = Marker.ADD
         marker.pose.orientation.w = 1.0

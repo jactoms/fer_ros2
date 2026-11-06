@@ -4,8 +4,7 @@ fer_hand_mjc:
   ros__parameters:
     model_path: ''                # empty: share/fer_hand_mjc/models/hand_scene.xml
     body_name: hand
-    commanded_bodies: [tracker]   # moved only by /hand_mjc/<body>/command (fer_track_hand)
-    frame_id: world
+    frame_id: world               # hand_mjc.launch.py links it to the robot (parent_frame)
     publish_rate_hz: 100.0
     viewer: true                  # false: headless (no window)
     motion: sine                  # static | sine | random; /hand_mjc/target overrides it

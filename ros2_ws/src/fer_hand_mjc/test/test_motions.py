@@ -21,13 +21,13 @@ def test_sine_oscillates_around_start():
     assert m.position(1.25, DT) == pytest.approx((0.5, 0.15, 0.55))  # quarter period
 
 
-def test_defaults_cover_a_wide_area_slower_than_the_tracker():
+def test_defaults_cover_a_wide_area_slower_than_follow():
     sine = HandMotion(motion='sine', start=START)
     path = [sine.position(k * DT, DT) for k in range(int(12.5 / DT))]  # one period
     span = [max(p[i] for p in path) - min(p[i] for p in path) for i in range(3)]
     assert span == pytest.approx([0.2, 0.6, 0.3], abs=1e-3)
     speed = max(math.dist(p, q) for p, q in zip(path, path[1:])) / DT
-    assert speed < 0.25  # fer_track_hand max_speed
+    assert speed < 0.25  # fer_moveit follow_max_speed
     rnd = HandMotion(motion='random', start=START)
     path = [rnd.position(k * DT, DT) for k in range(int(60.0 / DT))]
     span = [max(p[i] for p in path) - min(p[i] for p in path) for i in range(3)]

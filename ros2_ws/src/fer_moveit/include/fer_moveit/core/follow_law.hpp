@@ -28,7 +28,7 @@ Eigen::Matrix<double, 6, 1> follow_twist(
 /// \brief Velocity of a moving point from its position samples.
 ///
 /// Finite difference of consecutive samples, smoothed by a first-order low-pass, as the
-/// fer_track_hand prototype does. Times are the samples' own stamps, so the estimate does not
+/// fer_track_hand prototype did. Times are the samples' own stamps, so the estimate does not
 /// depend on the clock of whoever reads it.
 class VelocityEstimator
 {

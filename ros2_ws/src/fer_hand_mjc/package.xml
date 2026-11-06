@@ -3,7 +3,7 @@
 <package format="3">
   <name>fer_hand_mjc</name>
   <version>0.0.0</version>
-  <description>The MuJoCo simulation: a scripted human hand (a sphere) and ROS-commanded bodies (the tracker cube); publishes their positions on ROS 2 and shows them in MuJoCo and RViz.</description>
+  <description>The MuJoCo simulation of a scripted human hand (a sphere); publishes its position and TF on ROS 2 and shows it in MuJoCo and RViz.</description>
   <maintainer email="jacobtom99rp@gmail.com">Tom Jacob</maintainer>
   <license>Apache-2.0</license>
 
@@ -17,6 +17,7 @@
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>  <!-- static_transform_publisher (base -> world) -->
   <exec_depend>rviz2</exec_depend>
 
   <test_depend>ament_flake8</test_depend>

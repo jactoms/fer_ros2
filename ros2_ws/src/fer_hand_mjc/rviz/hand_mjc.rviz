@@ -33,7 +33,7 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true
-      Name: Bodies
+      Name: Hand
       Namespaces:
         hand_mjc: true
       Topic:
@@ -42,18 +42,6 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /hand_mjc/marker
-      Value: true
-    - Class: rviz_default_plugins/Marker
-      Enabled: true
-      Name: Track status
-      Namespaces:
-        track_hand: true
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /track_hand/marker
       Value: true
   Enabled: true
   Global Options:
