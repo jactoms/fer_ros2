@@ -1,6 +1,7 @@
 // Contract of /motion/follow: the real MotionServer with a FakeStreamer (no Servo, no arm).
 // The TCP sits still at (0.3, 0, 0.5) in base; the static target "goal" is 10 cm ahead in x,
-// "high" is above the workspace (default box z <= 0.50). follow_halt_timeout is 0.3 s.
+// "high" is above the workspace (default box z <= 0.50). follow_halt_timeout is 0.3 s; the
+// stall watchdog ends a goal that commands a motion after 1.3 s (contract_fixture.hpp).
 
 #include <gtest/gtest.h>
 
@@ -298,6 +299,40 @@ TEST_F(FollowContract, ShortHaltIsRiddenOut)
   std::this_thread::sleep_for(100ms);
   streamer_.load()->step_code = StreamStatus::Code::OK;
   std::this_thread::sleep_for(500ms);                           // longer than the halt timeout
+  EXPECT_EQ(result.wait_for(0s), std::future_status::timeout);  // still following
+
+  follow_client_->async_cancel_goal(handle);
+  ASSERT_TRUE(wait(result));
+  EXPECT_EQ(result.get().result->outcome.code, Outcome::CANCELLED);
+}
+
+TEST_F(FollowContract, StreamThatCrawlsWithoutHaltingIsUnreachableAndTheArmStops)
+{
+  // Servo near a singularity: SLOWED in every cycle, never HALTED, so the halt watchdog does
+  // not fire. The fake TCP does not move while 0.125 m/s is commanded: the stall watchdog
+  // ends the goal after window + timeout (1.3 s here).
+  start_follow();
+  auto handle = send_follow(follow_goal());
+  auto result = follow_client_->async_get_result(handle);
+  ASSERT_TRUE(streaming(5));
+  streamer_.load()->step_code = StreamStatus::Code::SLOWED;
+  const auto slowed_at = std::chrono::steady_clock::now();
+  ASSERT_TRUE(wait(result));
+  EXPECT_GE(std::chrono::steady_clock::now() - slowed_at, 1000ms);
+  EXPECT_EQ(result.get().code, rclcpp_action::ResultCode::ABORTED);
+  EXPECT_EQ(result.get().result->outcome.code, Outcome::UNREACHABLE);
+  EXPECT_NE(result.get().result->outcome.message.find("commanded"), std::string::npos);
+  EXPECT_GE(halts(), 1);
+}
+
+TEST_F(FollowContract, TcpOnTheGoalIsNotAStall)
+{
+  // The goal is the TCP itself: nothing to command, so a TCP at rest is fine however long.
+  start_follow();
+  auto handle = send_follow(follow_goal("fer_hand_tcp"));
+  auto result = follow_client_->async_get_result(handle);
+  ASSERT_TRUE(streaming(5));
+  std::this_thread::sleep_for(2000ms);                          // longer than window + timeout
   EXPECT_EQ(result.wait_for(0s), std::future_status::timeout);  // still following
 
   follow_client_->async_cancel_goal(handle);

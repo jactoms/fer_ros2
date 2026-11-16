@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -319,7 +320,12 @@ void MotionServer::follow(
   auto target_seen = next;  // last time the target had a new sample
   auto feedback_due = next;
   auto last_status = StreamStatus::Code::OK;
-  std::optional<rclcpp::Time> halted_since;    // the stream has reported HALTED since then
+  std::optional<rclcpp::Time> halted_since;  // the stream has reported HALTED since then
+  // Commanded, but the TCP does not follow. A low speed_scaling must not put every command
+  // below min_speed, which would switch the watchdog off.
+  StallLimits stall_limits = follow_stall_;
+  stall_limits.min_speed = std::min(stall_limits.min_speed, 0.5 * gains.max_speed);
+  StallDetector stall(stall_limits);
   Eigen::Vector3d held = start.translation();  // last goal inside the workspace
   bool holding = false;
   while (true)
@@ -377,7 +383,8 @@ void MotionServer::follow(
     const Eigen::Vector3d velocity =
       inside ? target_velocity.velocity() : Eigen::Vector3d::Zero().eval();
     const Eigen::Isometry3d tcp = lookup(TCP_FRAME);
-    const auto status = streamer.step(follow_twist(tcp, command, velocity, gains));
+    const auto twist = follow_twist(tcp, command, velocity, gains);
+    const auto status = streamer.step(twist);
     if (status.code == StreamStatus::Code::INVALID)
     {
       throw MotionError(Outcome::EXECUTION_FAILED, "Cartesian stream: " + status.message);
@@ -402,6 +409,16 @@ void MotionServer::follow(
       throw MotionError(
         Outcome::UNREACHABLE, "Cartesian stream halted for " +
                                 std::to_string(follow_halt_timeout_) + " s: " + status.message);
+    }
+    // A stream can also slow down almost to zero without ever reporting a halt (Servo near a
+    // singularity: SLOWED down to ~0 % of the command). Judge what the TCP really does.
+    if (stall.update(now.seconds(), twist.head<3>(), tcp.translation()))
+    {
+      char speeds[96];
+      std::snprintf(
+        speeds, sizeof(speeds), "TCP moved %.3f m/s along the commanded %.3f m/s, for %.1f s",
+        stall.measured_speed(), stall.commanded_speed(), follow_stall_.timeout);
+      throw MotionError(Outcome::UNREACHABLE, std::string(speeds) + " (" + status.message + ")");
     }
     if (now >= feedback_due)
     {
@@ -512,9 +529,16 @@ MotionServer::MotionServer(
     node->declare_parameter("follow_workspace_min", std::vector<double>{0.25, -0.30, 0.25}),
     node->declare_parameter("follow_workspace_max", std::vector<double>{0.60, 0.30, 0.50}))),
   follow_halt_timeout_(node->declare_parameter("follow_halt_timeout", 1.0)),
+  follow_stall_{
+    node->declare_parameter("follow_stall_window", 0.5),
+    node->declare_parameter("follow_stall_min_speed", 0.03),
+    node->declare_parameter("follow_stall_ratio", 0.2),
+    node->declare_parameter("follow_stall_timeout", 1.5)},
   make_streamer_(std::move(make_streamer)),
   startup_begin_(std::chrono::steady_clock::now())
 {
+  follow_stall_.validate();  // fail at startup, not on the first Follow goal
+
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, node);
 

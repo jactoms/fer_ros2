@@ -120,6 +120,146 @@ TEST(VelocityEstimator, IgnoresSamplesThatAreNotNewer)
   EXPECT_NEAR(estimator.velocity().x(), 0.1, 1e-9);
 }
 
+namespace
+{
+
+/// Feed \p detector at 100 Hz from \p from to \p to (s): commanded speed \p command along x,
+/// the TCP moving along x at \p speed from \p x0. \return the first time update() was true, or
+/// -1.
+double run_stall(
+  StallDetector & detector, double from, double to, double command, double speed, double x0 = 0.0)
+{
+  for (int i = static_cast<int>(std::lround(from * 100.0)); i <= std::lround(to * 100.0); ++i)
+  {
+    const double t = 0.01 * i;
+    if (detector.update(
+          t, Eigen::Vector3d(command, 0.0, 0.0),
+          Eigen::Vector3d(x0 + speed * (t - from), 0.0, 0.5)))
+    {
+      return t;
+    }
+  }
+  return -1.0;
+}
+
+}  // namespace
+
+TEST(StallDetector, TcpThatMovesAsCommandedIsNotStalled)
+{
+  StallDetector detector({});
+  EXPECT_LT(run_stall(detector, 0.0, 5.0, 0.1, 0.1), 0.0);
+  EXPECT_NEAR(detector.commanded_speed(), 0.1, 1e-9);
+  EXPECT_NEAR(detector.measured_speed(), 0.1, 1e-6);
+}
+
+TEST(StallDetector, StillTcpUnderACommandIsStalledAfterWindowAndTimeout)
+{
+  StallDetector detector({});  // window 0.5 s, timeout 1.5 s
+  const double stalled_at = run_stall(detector, 0.0, 5.0, 0.1, 0.0);
+  EXPECT_NEAR(stalled_at, 2.0, 0.015);  // judged from 0.5 s on, stalled 1.5 s later
+  EXPECT_NEAR(detector.measured_speed(), 0.0, 1e-12);
+}
+
+TEST(StallDetector, CrawlBelowTheRatioIsStalledAboveItIsNot)
+{
+  StallDetector crawl({});
+  EXPECT_GT(run_stall(crawl, 0.0, 5.0, 0.1, 0.01), 0.0);  // 10 % of the command
+  StallDetector slow({});
+  EXPECT_LT(run_stall(slow, 0.0, 5.0, 0.1, 0.03), 0.0);  // 30 %: slow, but it follows
+}
+
+TEST(StallDetector, BackAndForthWithAPeriodOfTheWindowIsNotStalled)
+{
+  // A waving hand at 2 Hz (period = window): the TCP follows it, so it ends every window where
+  // it started. The command nets out to zero as well, so nothing is judged.
+  StallDetector detector({});
+  const double w = 2.0 * M_PI * 2.0, a = 0.02;  // 2 Hz, +-2 cm: up to 0.25 m/s
+  for (int i = 0; i <= 500; ++i)
+  {
+    const double t = 0.01 * i;
+    EXPECT_FALSE(detector.update(
+      t, Eigen::Vector3d(0.0, a * w * std::cos(w * t), 0.0),
+      Eigen::Vector3d(0.4, a * std::sin(w * t), 0.5)))
+      << "at t = " << t;
+  }
+  EXPECT_LT(detector.commanded_speed(), 0.03);
+}
+
+TEST(StallDetector, BackAndForthAroundAStuckTcpThatIsCommandedAwayIsStalled)
+{
+  // The same wave, on top of a steady 0.1 m/s command in x that the TCP never follows.
+  StallDetector detector({});
+  const double w = 2.0 * M_PI * 2.0, a = 0.02;
+  double fired = -1.0;
+  for (int i = 0; i <= 500 && fired < 0.0; ++i)
+  {
+    const double t = 0.01 * i;
+    if (detector.update(
+          t, Eigen::Vector3d(0.1, a * w * std::cos(w * t), 0.0), Eigen::Vector3d(0.4, 0.0, 0.5)))
+    {
+      fired = t;
+    }
+  }
+  EXPECT_NEAR(fired, 2.0, 0.015);
+}
+
+TEST(StallDetector, MotionAcrossTheCommandIsNoProgress)
+{
+  // Commanded along x, the TCP slides along y as fast: it does not get where it is sent.
+  StallDetector detector({});
+  double fired = -1.0;
+  for (int i = 0; i <= 500 && fired < 0.0; ++i)
+  {
+    const double t = 0.01 * i;
+    if (detector.update(t, Eigen::Vector3d(0.1, 0.0, 0.0), Eigen::Vector3d(0.4, 0.1 * t, 0.5)))
+    {
+      fired = t;
+    }
+  }
+  EXPECT_NEAR(fired, 2.0, 0.015);
+  EXPECT_NEAR(detector.measured_speed(), 0.0, 1e-9);
+}
+
+TEST(StallDetector, CommandsBelowMinSpeedAreNotJudged)
+{
+  StallDetector detector({});  // min_speed 0.03 m/s
+  EXPECT_LT(run_stall(detector, 0.0, 5.0, 0.02, 0.0), 0.0);
+}
+
+TEST(StallDetector, ShortStallIsRiddenOutAndTheTimerStartsAgain)
+{
+  StallDetector detector({});
+  EXPECT_LT(run_stall(detector, 0.0, 1.0, 0.1, 0.1), 0.0);        // moving
+  EXPECT_LT(run_stall(detector, 1.01, 2.0, 0.1, 0.0, 0.1), 0.0);  // still for 1 s
+  EXPECT_LT(run_stall(detector, 2.01, 3.0, 0.1, 0.1, 0.1), 0.0);  // moving again
+  // Still again: the 1.5 s count starts anew, once the window shows the stop (~0.4 s).
+  const double stalled_at = run_stall(detector, 3.01, 6.0, 0.1, 0.0, 0.2);
+  EXPECT_GT(stalled_at, 3.01 + 1.5);
+  EXPECT_LT(stalled_at, 3.01 + 0.5 + 1.5 + 0.02);
+}
+
+TEST(StallDetector, ResetForgetsTheHistory)
+{
+  StallDetector detector({});
+  run_stall(detector, 0.0, 1.9, 0.1, 0.0);  // almost stalled
+  detector.reset();
+  EXPECT_LT(run_stall(detector, 2.0, 2.4, 0.1, 0.0), 0.0);  // window not full again yet
+  EXPECT_NEAR(detector.commanded_speed(), 0.0, 1e-12);
+}
+
+TEST(StallDetector, RejectsInvalidLimits)
+{
+  StallLimits no_window;
+  no_window.window = 0.0;
+  EXPECT_THROW(StallDetector{no_window}, std::invalid_argument);
+  StallLimits ratio_one;
+  ratio_one.min_ratio = 1.0;
+  EXPECT_THROW(StallDetector{ratio_one}, std::invalid_argument);
+  StallLimits no_timeout;
+  no_timeout.timeout = -1.0;
+  EXPECT_THROW(StallDetector{no_timeout}, std::invalid_argument);
+}
+
 TEST(VelocityEstimator, ResetForgetsTheSamples)
 {
   VelocityEstimator estimator(0.0);

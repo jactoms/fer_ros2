@@ -79,4 +79,67 @@ void VelocityEstimator::reset()
   velocity_.setZero();
 }
 
+void StallLimits::validate() const
+{
+  if (!(window > 0.0) || !(min_speed > 0.0) || !(timeout > 0.0))
+  {
+    throw std::invalid_argument("stall window, min_speed and timeout must be > 0");
+  }
+  if (!(min_ratio > 0.0 && min_ratio < 1.0))
+  {
+    throw std::invalid_argument("stall min_ratio must be in (0, 1)");
+  }
+}
+
+StallDetector::StallDetector(const StallLimits & limits) : limits_(limits) { limits_.validate(); }
+
+bool StallDetector::update(
+  double t, const Eigen::Vector3d & commanded_velocity, const Eigen::Vector3d & tcp)
+{
+  samples_.push_back({t, commanded_velocity, tcp});
+  // Keep one sample at or before t - window, so the displacement spans the whole window.
+  while (samples_.size() > 2 && samples_[1].t <= t - limits_.window)
+  {
+    samples_.pop_front();
+  }
+  const double span = t - samples_.front().t;
+  if (span < limits_.window)
+  {
+    return false;  // not enough history yet
+  }
+
+  // Each command acts until the next cycle; the newest one has not acted yet.
+  Eigen::Vector3d commanded = Eigen::Vector3d::Zero();
+  for (std::size_t i = 1; i < samples_.size(); ++i)
+  {
+    commanded += samples_[i - 1].commanded_velocity * (samples_[i].t - samples_[i - 1].t);
+  }
+  const double commanded_norm = commanded.norm();
+  commanded_ = commanded_norm / span;
+  measured_ = commanded_norm > 0.0
+                ? (tcp - samples_.front().tcp).dot(commanded / commanded_norm) / span
+                : 0.0;
+
+  const bool stalled =
+    commanded_ >= limits_.min_speed && measured_ < limits_.min_ratio * commanded_;
+  if (!stalled)
+  {
+    stalled_since_.reset();
+    return false;
+  }
+  if (!stalled_since_)
+  {
+    stalled_since_ = t;
+  }
+  return t - *stalled_since_ >= limits_.timeout;
+}
+
+void StallDetector::reset()
+{
+  samples_.clear();
+  stalled_since_.reset();
+  commanded_ = 0.0;
+  measured_ = 0.0;
+}
+
 }  // namespace fer_moveit

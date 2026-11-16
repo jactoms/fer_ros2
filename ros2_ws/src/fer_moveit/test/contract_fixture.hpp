@@ -70,6 +70,10 @@ protected:
       {"rest_timeout", 2.0},
       {"startup_timeout", 10.0},
       {"follow_halt_timeout", 0.3},
+      // The fake TCP never moves, so the stall watchdog ends every Follow goal that commands a
+      // motion after window + timeout = 1.3 s; every other Follow test ends well before that.
+      {"follow_stall_window", 0.5},
+      {"follow_stall_timeout", 0.8},
     });
     node_ = std::make_shared<rclcpp::Node>("fer_moveit_motion_server", options);
     fakes_ = std::make_shared<rclcpp::Node>("contract_fakes");

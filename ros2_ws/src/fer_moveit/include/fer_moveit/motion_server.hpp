@@ -115,6 +115,7 @@ private:
   double follow_feedback_period_;
   Workspace follow_workspace_;
   double follow_halt_timeout_;
+  StallLimits follow_stall_;
 
   StreamerFactory make_streamer_;
   std::unique_ptr<CartesianStreamer> streamer_;

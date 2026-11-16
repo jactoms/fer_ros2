@@ -22,6 +22,15 @@ fer_moveit_motion_server:
     follow_workspace_min: [0.25, -0.30, 0.25]  # m
     follow_workspace_max: [0.60, 0.30, 0.50]   # m
     follow_halt_timeout: 1.0            # s, stream halted this long: end with UNREACHABLE
+    # Stall watchdog: over follow_stall_window, the TCP progresses along the net commanded
+    # displacement at < follow_stall_ratio of the commanded speed, for follow_stall_timeout: end
+    # with UNREACHABLE. Catches what never reports a halt, e.g. Servo slowing down towards a
+    # singularity. Net commands below follow_stall_min_speed are not judged (0.03 m/s = 1.5 cm
+    # error to a still goal at gain 2/s; a waving hand nets out to about zero).
+    follow_stall_window: 0.5            # s
+    follow_stall_min_speed: 0.03        # m/s
+    follow_stall_ratio: 0.2
+    follow_stall_timeout: 1.5           # s
 
     # /motion/follow: MoveIt Servo, run as a library (adapters/servo_streamer).
     moveit_servo:

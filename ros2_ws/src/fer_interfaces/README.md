@@ -95,10 +95,12 @@ Every implementation of an interface passes the contract test of its server pack
   or that is older than `target_timeout`, stops the arm and ends `NOT_FOUND`. The backend
   follows only while the goal (target · `offset`) is inside its workspace; outside it, the TCP
   holds where the goal left (it never moves along the edge towards the target), and the
-  feedback `distance` stays the distance to the real goal. If
-  the arm cannot move on for the backend's halt timeout (e.g. at a singularity, a joint
-  limit or a collision), the arm stops and the goal ends `UNREACHABLE`; a planned move
-  (`MoveToJoints`) can free it.
+  feedback `distance` stays the distance to the real goal. If the arm cannot move on (e.g.
+  at a singularity, a joint limit or a collision), either stopped or much slower than
+  commanded, for the backend's timeouts, the arm stops and the goal ends `UNREACHABLE`; a
+  planned move (`MoveToJoints`) can free it. `speed_scaling` defaults to 1.0 here, not 0.3
+  as for the planned moves: it scales the backend's follow speed cap, and a lower cap leaves
+  the TCP behind a moving hand.
 - **Motion outcomes:** the world model or the planner not answering → `TIMEOUT`; a failed
   execution (e.g. an inactive controller) → `EXECUTION_FAILED`; the arm in reflex or user
   stop → `ROBOT_ERROR`.
