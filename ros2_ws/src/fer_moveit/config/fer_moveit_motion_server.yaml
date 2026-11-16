@@ -16,6 +16,11 @@ fer_moveit_motion_server:
     follow_rotation_gain: 2.0           # 1/s
     follow_max_rotation_speed: 0.5      # rad/s at speed_scaling 1
     follow_velocity_time_constant: 0.05 # s, low-pass of the target velocity estimate
+    # Target velocity fed forward in full while the newest target sample is at most
+    # follow_velocity_hold old, then faded to 0 over follow_velocity_fade (a tracker that stopped
+    # sending must not carry the TCP on). Hold > the tracker's sample period + jitter.
+    follow_velocity_hold: 0.05          # s
+    follow_velocity_fade: 0.05          # s
     follow_feedback_period: 0.1         # s
     # Box in base Follow works in, away from singular regions; a goal outside it: the TCP holds.
     # MuJoCo, 6 Nov: every corner reached (far high ones slowed, 3-12 mm short); x 0.65 / z 0.55 halted.

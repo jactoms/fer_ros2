@@ -380,8 +380,11 @@ void MotionServer::follow(
     }
     Eigen::Isometry3d command = goal_pose;
     command.translation() = held;
-    const Eigen::Vector3d velocity =
-      inside ? target_velocity.velocity() : Eigen::Vector3d::Zero().eval();
+    // Feed the target velocity forward only while its samples are fresh: a tracker that stopped
+    // sending would otherwise carry the TCP past the last known position until target_timeout.
+    const double feedforward =
+      inside ? follow_velocity_fade_.weight((now - target_seen).seconds()) : 0.0;
+    const Eigen::Vector3d velocity = feedforward * target_velocity.velocity();
     const Eigen::Isometry3d tcp = lookup(TCP_FRAME);
     const auto twist = follow_twist(tcp, command, velocity, gains);
     const auto status = streamer.step(twist);
@@ -524,6 +527,9 @@ MotionServer::MotionServer(
     node->declare_parameter("follow_rotation_gain", 2.0),
     node->declare_parameter("follow_max_rotation_speed", 0.5)},
   follow_velocity_time_constant_(node->declare_parameter("follow_velocity_time_constant", 0.05)),
+  follow_velocity_fade_{
+    node->declare_parameter("follow_velocity_hold", 0.05),
+    node->declare_parameter("follow_velocity_fade", 0.05)},
   follow_feedback_period_(node->declare_parameter("follow_feedback_period", 0.1)),
   follow_workspace_(Workspace::from(
     node->declare_parameter("follow_workspace_min", std::vector<double>{0.25, -0.30, 0.25}),
@@ -537,7 +543,9 @@ MotionServer::MotionServer(
   make_streamer_(std::move(make_streamer)),
   startup_begin_(std::chrono::steady_clock::now())
 {
-  follow_stall_.validate();  // fail at startup, not on the first Follow goal
+  // Fail at startup, not on the first Follow goal.
+  follow_velocity_fade_.validate();
+  follow_stall_.validate();
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, node);

@@ -79,6 +79,27 @@ void VelocityEstimator::reset()
   velocity_.setZero();
 }
 
+void VelocityFade::validate() const
+{
+  if (!(hold >= 0.0) || !(fade >= 0.0))
+  {
+    throw std::invalid_argument("velocity fade hold and fade must be >= 0");
+  }
+}
+
+double VelocityFade::weight(double age) const
+{
+  if (age <= hold)
+  {
+    return 1.0;
+  }
+  if (age >= hold + fade)
+  {
+    return 0.0;
+  }
+  return 1.0 - (age - hold) / fade;
+}
+
 void StallLimits::validate() const
 {
   if (!(window > 0.0) || !(min_speed > 0.0) || !(timeout > 0.0))

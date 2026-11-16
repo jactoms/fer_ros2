@@ -56,6 +56,11 @@ protected:
     return tf_buffer_->canTransform("base", child, tf2::TimePointZero);
   }
 
+  double x_of(const std::string & child)
+  {
+    return tf_buffer_->lookupTransform("base", child, tf2::TimePointZero).transform.translation.x;
+  }
+
   Follow::Goal follow_goal(const std::string & frame_id = "goal")
   {
     Follow::Goal goal;
@@ -217,6 +222,36 @@ TEST_F(FollowContract, TargetThatStopsUpdatingIsNotFoundAndTheArmStops)
   EXPECT_EQ(result.get().result->outcome.code, Outcome::NOT_FOUND);
   EXPECT_NE(result.get().result->outcome.message.find("not updated"), std::string::npos);
   EXPECT_GE(halts(), 1);
+}
+
+TEST_F(FollowContract, TargetVelocityIsFedForwardOnlyWhileTheTargetIsFresh)
+{
+  start_follow();
+  // 3 cm ahead of the still TCP, moving away at 0.05 m/s: command = 0.05 + 2/s * error, below
+  // the cap. Fast enough to finish before the stall watchdog (1.3 s) ends the goal.
+  MovingFrame hand(fakes_, frame(fakes_, "hand", 0.33, 0.0, 0.5), 0.05);
+  ASSERT_TRUE(wait_until([this] { return can_see("hand"); }));
+  auto goal = follow_goal("hand");
+  goal.speed_scaling = 1.0;
+  goal.target_timeout = 1.0;
+  auto handle = send_follow(goal);
+  auto result = follow_client_->async_get_result(handle);
+  ASSERT_TRUE(streaming(30));  // >= 0.3 s: the velocity estimate has settled (0.05 s low-pass)
+
+  // Fresh: the commanded speed is the feedforward 0.05 on top of the position term.
+  const double fresh = streamer_.load()->last_twist()(0) - 2.0 * (x_of("hand") - 0.3);
+  EXPECT_NEAR(fresh, 0.05, 0.01);
+
+  hand.freeze();
+  std::this_thread::sleep_for(250ms);  // > follow_velocity_hold + fade (0.1 s), < target_timeout
+  ASSERT_EQ(result.wait_for(0s), std::future_status::timeout);  // still following
+  // Stale: only the position term towards the last sample is left.
+  const double stale = streamer_.load()->last_twist()(0) - 2.0 * (x_of("hand") - 0.3);
+  EXPECT_NEAR(stale, 0.0, 1e-3);
+
+  follow_client_->async_cancel_goal(handle);
+  ASSERT_TRUE(wait(result));
+  EXPECT_EQ(result.get().result->outcome.code, Outcome::CANCELLED);
 }
 
 TEST_F(FollowContract, InvalidStreamIsExecutionFailedAndTheArmStops)

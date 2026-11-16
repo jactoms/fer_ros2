@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -269,6 +270,81 @@ TEST(VelocityEstimator, ResetForgetsTheSamples)
   EXPECT_NEAR(estimator.velocity().norm(), 0.0, 1e-12);
   EXPECT_TRUE(estimator.update(0.0, Eigen::Vector3d(9, 9, 9)));  // old stamps are fine again
   EXPECT_NEAR(estimator.velocity().norm(), 0.0, 1e-12);
+}
+
+TEST(VelocityFade, FullUpToHoldThenLinearToZero)
+{
+  const VelocityFade fade{0.05, 0.10};
+  EXPECT_DOUBLE_EQ(fade.weight(-0.01), 1.0);  // a sample stamped after "now": fresh
+  EXPECT_DOUBLE_EQ(fade.weight(0.0), 1.0);
+  EXPECT_DOUBLE_EQ(fade.weight(0.05), 1.0);
+  EXPECT_NEAR(fade.weight(0.075), 0.75, 1e-12);
+  EXPECT_NEAR(fade.weight(0.10), 0.5, 1e-12);
+  EXPECT_NEAR(fade.weight(0.15), 0.0, 1e-12);  // 0.05 + 0.10 is not exactly 0.15 in binary
+  EXPECT_DOUBLE_EQ(fade.weight(0.16), 0.0);
+  EXPECT_DOUBLE_EQ(fade.weight(10.0), 0.0);
+}
+
+TEST(VelocityFade, ZeroFadeCutsAtHold)
+{
+  const VelocityFade fade{0.05, 0.0};
+  EXPECT_DOUBLE_EQ(fade.weight(0.05), 1.0);
+  EXPECT_DOUBLE_EQ(fade.weight(0.0501), 0.0);
+  const VelocityFade none{0.0, 0.0};
+  EXPECT_DOUBLE_EQ(none.weight(0.0), 1.0);
+  EXPECT_DOUBLE_EQ(none.weight(1e-9), 0.0);
+}
+
+TEST(VelocityFade, RejectsNegativeValues)
+{
+  EXPECT_NO_THROW((VelocityFade{0.0, 0.0}.validate()));
+  EXPECT_THROW((VelocityFade{-0.01, 0.05}.validate()), std::invalid_argument);
+  EXPECT_THROW((VelocityFade{0.05, -0.01}.validate()), std::invalid_argument);
+}
+
+namespace
+{
+
+// Kinematic loop at 100 Hz: the TCP moves exactly as commanded. The target moves at 0.1 m/s in
+// x, sampled every cycle, and stops sending at t = 1 s (last position x = 0.1). The loop runs
+// on to t = 1.5 s, where target_timeout 0.5 s would end Follow.
+// \return how far the TCP got past the last target position (m).
+double overshoot_after_dropout(const VelocityFade & fade)
+{
+  const FollowGains gains;  // 2/s, 0.25 m/s
+  const double dt = 0.01;
+  VelocityEstimator estimator(0.05);
+  double tcp = 0.0;
+  double target = 0.0;
+  double seen = 0.0;
+  double furthest = 0.0;
+  for (int i = 0; i <= 150; ++i)
+  {
+    const double t = i * dt;
+    if (t <= 1.0 + 1e-9)
+    {
+      target = 0.1 * t;
+      estimator.update(t, Eigen::Vector3d(target, 0, 0));
+      seen = t;
+    }
+    const Eigen::Vector3d velocity = fade.weight(t - seen) * estimator.velocity();
+    tcp += follow_twist(at(tcp, 0, 0), at(target, 0, 0), velocity, gains)(0) * dt;
+    furthest = std::max(furthest, tcp);
+  }
+  return furthest - target;
+}
+
+}  // namespace
+
+TEST(VelocityFade, StaleVelocityNoLongerCarriesTheTcpOn)
+{
+  // Before the fade: the full velocity until target_timeout (same as a 0.5 s hold, no fade).
+  const double before = overshoot_after_dropout(VelocityFade{0.5, 0.0});
+  // Default fade: full for 0.05 s, gone after 0.1 s; at 0.1 m/s that is < 1 cm at most.
+  const double after = overshoot_after_dropout(VelocityFade{0.05, 0.05});
+  EXPECT_GT(before, 0.025);
+  EXPECT_LT(after, 0.01);
+  EXPECT_GT(after, 0.0);  // the first 0.05 s are still fed forward (a late sample is no dropout)
 }
 
 }  // namespace fer_moveit

@@ -408,18 +408,24 @@ inline geometry_msgs::msg::TransformStamped frame(
 }
 
 /// A frame republished at 100 Hz with fresh stamps, like a tracker; freeze() stops it.
+/// With \p velocity_x (m/s) it moves along x from where \p transform puts it.
 class MovingFrame
 {
 public:
-  MovingFrame(const rclcpp::Node::SharedPtr & node, geometry_msgs::msg::TransformStamped transform)
+  MovingFrame(
+    const rclcpp::Node::SharedPtr & node, geometry_msgs::msg::TransformStamped transform,
+    double velocity_x = 0.0)
   : transform_(std::move(transform)),
     broadcaster_(std::make_shared<tf2_ros::TransformBroadcaster>(node))
   {
+    const double x0 = transform_.transform.translation.x;
+    const rclcpp::Time t0 = node->now();
     timer_ = node->create_wall_timer(
       std::chrono::milliseconds(10),
-      [this, node]
+      [this, node, x0, t0, velocity_x]
       {
         transform_.header.stamp = node->now();
+        transform_.transform.translation.x = x0 + velocity_x * (node->now() - t0).seconds();
         broadcaster_->sendTransform(transform_);
       });
   }

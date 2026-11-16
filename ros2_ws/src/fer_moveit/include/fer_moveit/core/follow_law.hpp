@@ -70,6 +70,24 @@ private:
   Eigen::Vector3d velocity_{Eigen::Vector3d::Zero()};
 };
 
+/// \brief How much of the target velocity is fed forward when the target's samples get old.
+///
+/// A tracker that stops sending (dropout, crash) leaves the last velocity estimate behind; fed
+/// forward until target_timeout, it carries the TCP past the last known target position. The
+/// weight is 1 while the newest sample is at most `hold` old, then falls linearly to 0 over
+/// `fade`. Set `hold` above the tracker's sample period plus its jitter.
+struct VelocityFade
+{
+  double hold{0.05};  ///< s, full feedforward up to this sample age
+  double fade{0.05};  ///< s, then down to 0 over this; 0 = cut at `hold`
+
+  /// \throw std::invalid_argument unless hold and fade are >= 0.
+  void validate() const;
+
+  /// \brief Feedforward weight in [0, 1] for a newest sample \p age seconds old.
+  double weight(double age) const;
+};
+
 /// \brief Limits of StallDetector.
 struct StallLimits
 {
