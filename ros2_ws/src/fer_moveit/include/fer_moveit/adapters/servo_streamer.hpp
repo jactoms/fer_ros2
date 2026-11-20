@@ -7,6 +7,7 @@
 #include <moveit_servo/servo.hpp>
 
 #include "fer_moveit/adapters/cartesian_streamer.hpp"
+#include "fer_moveit/core/joint_shaper.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "trajectory_msgs/msg/joint_trajectory.hpp"
 
@@ -15,17 +16,20 @@ namespace fer_moveit
 
 /// \brief CartesianStreamer with MoveIt Servo as a library, in the motion server's process.
 ///
-/// Servo computes the joint state for each cycle; this class sends it as a short joint
-/// trajectory on the controller's topic (`moveit_servo.command_out_topic`). Servo's own node is
-/// not used, so the joint command passes through here: that is where shaping plugs in.
+/// Servo computes the joint state for each cycle; this class shapes it (JointShaper: Ruckig,
+/// within the velocity, acceleration and jerk limits of the selected profile) and sends it as a
+/// short joint trajectory on the controller's topic (`moveit_servo.command_out_topic`). Servo
+/// integrates its next state from the shaped one, so its collision and singularity checks see
+/// what is really commanded. Profile `off`: Servo's state is sent unshaped.
 ///
-/// Reads the `moveit_servo.*` parameters of the node, and needs `robot_description`,
-/// `robot_description_semantic`, `robot_description_kinematics` and
-/// `robot_description_planning` on it, as move_group does.
+/// Reads the `moveit_servo.*` parameters of the node, `follow_shaping_profile` and
+/// `follow_shaping.<profile>.max_velocity|max_acceleration|max_jerk` (one value per joint of the
+/// group), and needs `robot_description`, `robot_description_semantic`,
+/// `robot_description_kinematics` and `robot_description_planning` on it, as move_group does.
 class ServoStreamer : public CartesianStreamer
 {
 public:
-  /// \throws std::runtime_error if the Servo parameters are invalid.
+  /// \throws std::runtime_error if the Servo or shaping parameters are invalid.
   explicit ServoStreamer(const rclcpp::Node::SharedPtr & node);
 
   double period() const override;
@@ -36,6 +40,8 @@ public:
 private:
   /// Add \p state to the trajectory window, publish the window, remember \p state.
   void send(moveit_servo::KinematicState & state);
+  /// Replace \p state's motion by one shaper period towards its velocity relative to last_.
+  void shape(moveit_servo::KinematicState & state);
 
   rclcpp::Node::SharedPtr node_;
   std::shared_ptr<const servo::ParamListener> params_;
@@ -47,6 +53,8 @@ private:
 
   moveit_servo::KinematicState last_;                // last commanded joint state
   std::deque<moveit_servo::KinematicState> window_;  // the states the next message carries
+  std::unique_ptr<JointShaper> shaper_;              // null for profile "off"
+  rclcpp::Time stamp_;                               // time of the last command (period grid)
 };
 
 }  // namespace fer_moveit

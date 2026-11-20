@@ -37,6 +37,21 @@ fer_moveit_motion_server:
     follow_stall_ratio: 0.2
     follow_stall_timeout: 1.5           # s
 
+    # /motion/follow: jerk-limited shaping of Servo's joint command (Ruckig, core/joint_shaper).
+    # Every 10 ms command stays within these limits; one value per joint, fer_joint1..7.
+    # off: no shaping (Servo's command as is; write "off" or off). Any other name selects
+    # follow_shaping.<name>.
+    follow_shaping_profile: conservative
+    follow_shaping:
+      conservative:                     # velocity and acceleration as joint_limits.yaml
+        max_velocity: [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]        # rad/s
+        max_acceleration: [3.75, 1.875, 2.5, 3.125, 3.75, 5.0, 5.0]         # rad/s², datasheet / 4
+        max_jerk: [37.5, 18.75, 25.0, 31.25, 37.5, 50.0, 50.0]              # rad/s³, 10 x acceleration
+      max_sim:                          # the FER datasheet
+        max_velocity: [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]
+        max_acceleration: [15.0, 7.5, 10.0, 12.5, 15.0, 20.0, 20.0]
+        max_jerk: [7500.0, 3750.0, 5000.0, 6250.0, 7500.0, 10000.0, 10000.0]
+
     # /motion/follow: MoveIt Servo, run as a library (adapters/servo_streamer).
     moveit_servo:
       move_group_name: fer_arm

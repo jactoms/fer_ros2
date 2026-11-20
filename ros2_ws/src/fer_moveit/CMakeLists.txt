@@ -20,6 +20,7 @@ find_package(moveit_core REQUIRED)
 find_package(moveit_msgs REQUIRED)
 find_package(moveit_ros_planning REQUIRED)
 find_package(moveit_servo REQUIRED)
+find_package(ruckig REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
@@ -48,6 +49,7 @@ set(dependencies
 add_library(motion_server STATIC
   src/core/checks.cpp
   src/core/follow_law.cpp
+  src/core/joint_shaper.cpp
   src/adapters/world_model_client.cpp
   src/adapters/move_group_client.cpp
   src/adapters/servo_streamer.cpp
@@ -57,7 +59,7 @@ set_target_properties(motion_server PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(motion_server PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 ament_target_dependencies(motion_server ${dependencies})
-target_link_libraries(motion_server moveit_servo::moveit_servo_lib_cpp)
+target_link_libraries(motion_server moveit_servo::moveit_servo_lib_cpp ruckig::ruckig)
 if(franka_msgs_FOUND)
   target_sources(motion_server PRIVATE src/adapters/robot_mode_monitor.cpp)
   ament_target_dependencies(motion_server franka_msgs)
@@ -101,6 +103,9 @@ if(BUILD_TESTING)
 
   ament_add_ros_isolated_gtest(test_follow_law test/test_follow_law.cpp)
   target_link_libraries(test_follow_law motion_server)
+
+  ament_add_ros_isolated_gtest(test_joint_shaper test/test_joint_shaper.cpp)
+  target_link_libraries(test_joint_shaper motion_server)
 
   ament_add_ros_isolated_gtest(test_contract test/test_contract.cpp TIMEOUT 300)
   target_link_libraries(test_contract motion_server)
