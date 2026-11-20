@@ -63,10 +63,27 @@ def test_random_stays_in_box_at_speed_and_is_seeded():
     assert sum(steps) == pytest.approx(0.1 * DT * len(steps), rel=0.02)
 
 
+def test_random_around_the_robot_never_through_it():
+    # hand_mjc.yaml: the box wraps around the base; the hand centre stays 0.3 m from its axis.
+    m = HandMotion(motion='random', start=(0.45, 0.0, 0.35), random_center=(0.05, 0.0, 0.35),
+                   random_range=(0.5, 0.55, 0.04), random_speed=0.3, random_keepout_radius=0.3)
+    path = [m.position(k * DT, DT) for k in range(int(300.0 / DT))]
+    assert min(math.hypot(p[0], p[1]) for p in path) > 0.3
+    for p in path:
+        assert -0.45 - 1e-9 <= p[0] <= 0.55 + 1e-9
+        assert abs(p[1]) <= 0.55 + 1e-9
+        assert abs(p[2] - 0.35) <= 0.04 + 1e-9
+    assert min(p[0] for p in path) < -0.3  # behind the robot
+    assert min(p[1] for p in path) < -0.4 and max(p[1] for p in path) > 0.4  # both sides
+
+
 @pytest.mark.parametrize('kwargs', [
     {'motion': 'teleport'},
     {'start': (0.5, 0.0)},
     {'random_speed': 0.0},
+    {'random_center': (0.0, 0.0)},
+    {'random_keepout_radius': -0.1},
+    {'motion': 'random', 'start': (0.2, 0.0, 0.35), 'random_keepout_radius': 0.3},
 ])
 def test_invalid_rejected(kwargs):
     with pytest.raises(ValueError):

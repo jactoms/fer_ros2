@@ -49,6 +49,8 @@ class HandMjc:
         p('random_range', [0.1, 0.25, 0.04])
         p('random_speed', 0.1)
         p('random_seed', 0)
+        p('random_center', node.get_parameter('start_position').value)
+        p('random_keepout_radius', 0.0)
 
         g = lambda name: node.get_parameter(name).value  # noqa: E731
         self._frame = g('frame_id')
@@ -61,6 +63,8 @@ class HandMjc:
             random_range=g('random_range'),
             random_speed=g('random_speed'),
             random_seed=g('random_seed'),
+            random_center=g('random_center'),
+            random_keepout_radius=g('random_keepout_radius'),
         )
         rate_hz = g('publish_rate_hz')
         if rate_hz <= 0.0:

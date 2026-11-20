@@ -32,11 +32,16 @@ does not collide. The positions published are read back from MuJoCo (`xpos`).
 |---|---|---|
 | `static` | Holds `start_position` (0.45, 0, 0.35) | |
 | `sine` | Oscillates around it: ±0.10 / ±0.25 / ±0.04 m in x / y / z at 0.08 Hz (12.5 s period, peak speed 0.14 m/s) | `sine_amplitude`, `sine_frequency` |
-| `random` | Moves at 0.1 m/s to random waypoints in the box `start_position` ± (0.10, 0.25, 0.04) m, a new one on arrival | `random_range`, `random_speed`, `random_seed` (same seed, same path) |
+| `random` | Moves at 0.1 m/s to random waypoints in the box `random_center` ± `random_range`, a new one on arrival. `hand_mjc.yaml`: around the robot, x −0.45…0.55, y −0.55…0.55, z 0.31…0.39 m, but never through it: the hand centre stays more than `random_keepout_radius` (0.3 m) from the base axis, the straight paths between waypoints included | `random_center` (default `start_position`), `random_range`, `random_keepout_radius` (0: off), `random_speed`, `random_seed` (same seed, same path) |
+
+`hand_speed:=<m/s>` on the launch file sets the speed without editing the yaml: `random_speed`
+for `random`, the peak speed for `sine` (it sets `sine_frequency` from `sine_amplitude`).
 
 The defaults are a handover height: with the gripper 10 cm above the hand (`/motion/follow` with
 `offset: {position: {z: 0.1}}`), the gripper stays inside the Follow workspace of `fer_moveit`
-(z ≤ 0.50 m in `base`); `test/test_motions.py` checks it.
+(z ≤ 0.50 m in `base`); `test/test_motions.py` checks it. The `random` box of `hand_mjc.yaml` is
+larger than that workspace (x 0.25…0.60, y ±0.30 m): while the hand is outside it, the gripper
+holds.
 
 All parameters are in `config/hand_mjc.yaml`.
 
@@ -69,6 +74,7 @@ source install/setup.bash
 # with the robot running: MuJoCo viewer, sine, base -> world; the robot RViz shows the hand
 ros2 launch fer_hand_mjc hand_mjc.launch.py
 ros2 launch fer_hand_mjc hand_mjc.launch.py motion:=random     # static | sine | random
+ros2 launch fer_hand_mjc hand_mjc.launch.py motion:=random hand_speed:=0.3   # m/s
 # hand alone: no link to a robot, own RViz
 ros2 launch fer_hand_mjc hand_mjc.launch.py parent_frame:='' rviz:=true
 

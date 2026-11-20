@@ -5,6 +5,7 @@ parent_frame (default base) links the hand's world frame to the robot with a sta
 transform parent_frame -> world, so the robot side (/motion/follow, the robot RViz) sees the
 hand. world must be the frame_id in params_file.
 """
+import math
 from typing import List
 
 from launch import LaunchDescription
@@ -12,6 +13,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+import yaml
 
 
 def launch_setup(context, *args, **kwargs) -> List[Node]:
@@ -23,10 +25,22 @@ def launch_setup(context, *args, **kwargs) -> List[Node]:
     rviz = LaunchConfiguration('rviz').perform(context).lower() == 'true'
     rviz_config = LaunchConfiguration('rviz_config').perform(context)
     parent_frame = LaunchConfiguration('parent_frame').perform(context)
+    hand_speed = LaunchConfiguration('hand_speed').perform(context)
 
     overrides = {'viewer': viewer}
     if motion:
         overrides['motion'] = motion
+    if hand_speed:
+        # random: speed in m/s directly. sine: peak speed 2*pi*f*|amplitude| -> solve for f,
+        # with the amplitude from params_file.
+        speed = float(hand_speed)
+        if speed <= 0.0:
+            raise ValueError('hand_speed must be > 0')
+        with open(params_file, 'r') as f:
+            params = yaml.safe_load(f)['fer_hand_mjc']['ros__parameters']
+        amplitude = math.sqrt(sum(a * a for a in params.get('sine_amplitude', [0.1, 0.25, 0.04])))
+        overrides['random_speed'] = speed
+        overrides['sine_frequency'] = speed / (2.0 * math.pi * amplitude)
 
     nodes = [
         Node(
@@ -75,6 +89,10 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
         DeclareLaunchArgument(
             'motion', default_value='',
             description='Overrides the motion in params_file: static, sine, random.'),
+        DeclareLaunchArgument(
+            'hand_speed', default_value='',
+            description="Hand speed in m/s; '' keeps params_file. random: random_speed; "
+                        'sine: peak speed (sets sine_frequency from sine_amplitude).'),
         DeclareLaunchArgument(
             'parent_frame', default_value='base',
             description="Static identity transform <parent_frame> -> world; '' for none "

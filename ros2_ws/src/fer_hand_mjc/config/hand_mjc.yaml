@@ -13,6 +13,12 @@ fer_hand_mjc:
     start_position: [0.45, 0.0, 0.35]
     sine_amplitude: [0.1, 0.25, 0.04] # sine: +- around start_position
     sine_frequency: 0.08              # sine: Hz (peak hand speed ~0.14 m/s)
-    random_range: [0.1, 0.25, 0.04]   # random: waypoints within start_position +- this
+    # random: waypoints within random_center +- random_range, around the robot (x -0.45..0.55,
+    # y -0.55..0.55, z 0.31..0.39), but never through it: the hand centre stays more than
+    # random_keepout_radius from the base axis, paths included. Outside the Follow workspace of
+    # fer_moveit the gripper holds.
+    random_center: [0.05, 0.0, 0.35]
+    random_range: [0.5, 0.55, 0.04]
+    random_keepout_radius: 0.3
     random_speed: 0.1                 # random: m/s
     random_seed: 0                    # random: same seed, same path
