@@ -10,6 +10,7 @@
 
 #include "fer_interfaces/msg/outcome.hpp"
 #include "fer_moveit/core/checks.hpp"
+#include "fer_moveit/core/follow_law.hpp"
 
 namespace fer_moveit
 {
@@ -80,6 +81,38 @@ ServoStreamer::ServoStreamer(const rclcpp::Node::SharedPtr & node)
   publisher_ = node_->create_publisher<trajectory_msgs::msg::JointTrajectory>(
     params.command_out_topic, rclcpp::SystemDefaultsQoS());
 
+  // Posture term (follow_posture_*): read before the shaping block, which returns early for off.
+  const auto declared = [&](const std::string & name, const rclcpp::ParameterValue & value)
+  {
+    if (!node_->has_parameter(name))
+    {
+      node_->declare_parameter(name, value);
+    }
+    return node_->get_parameter(name);
+  };
+  posture_gain_ = declared("follow_posture_gain", rclcpp::ParameterValue(0.0)).as_double();
+  posture_max_speed_ =
+    declared("follow_posture_max_speed", rclcpp::ParameterValue(0.2)).as_double();
+  const auto rest = declared("follow_posture_rest", rclcpp::ParameterValue(std::vector<double>{}))
+                      .as_double_array();
+  const auto joints = group_->getActiveJointModelNames().size();
+  if (posture_gain_ < 0.0 || posture_max_speed_ <= 0.0)
+  {
+    throw std::runtime_error("follow_posture_gain must be >= 0 and follow_posture_max_speed > 0");
+  }
+  if (posture_gain_ > 0.0)
+  {
+    if (rest.size() != joints)
+    {
+      throw std::runtime_error(
+        "follow_posture_rest needs one value per joint of " + params.move_group_name);
+    }
+    posture_rest_ = Eigen::Map<const Eigen::VectorXd>(rest.data(), rest.size());
+    RCLCPP_INFO(
+      node_->get_logger(), "follow: posture term on (gain %.2f 1/s, max %.2f rad/s)", posture_gain_,
+      posture_max_speed_);
+  }
+
   if (!node_->has_parameter("follow_shaping_profile"))
   {
     // Any type: YAML reads an unquoted `off` as the boolean false.
@@ -109,7 +142,6 @@ ServoStreamer::ServoStreamer(const rclcpp::Node::SharedPtr & node)
   }
   try
   {
-    const auto joints = group_->getActiveJointModelNames().size();
     shaper_ =
       std::make_unique<JointShaper>(read_limits(node_, profile), joints, params.publish_period);
   }
@@ -177,6 +209,10 @@ StreamStatus ServoStreamer::step(const Twist & twist)
   const auto code = classify(servo_->getStatus());
   if (code != StreamStatus::Code::INVALID)
   {
+    if (code != StreamStatus::Code::HALTED)
+    {
+      add_posture(next);  // not while Servo holds the arm (collision, singularity, joint bound)
+    }
     try
     {
       shape(next);
@@ -206,6 +242,21 @@ bool ServoStreamer::halt()
   next.accelerations = shaped.acceleration;
   send(next);
   return shaper_->at_rest();
+}
+
+void ServoStreamer::add_posture(KinematicState & state)
+{
+  if (posture_gain_ == 0.0)
+  {
+    return;
+  }
+  robot_state_->setJointGroupActivePositions(group_, last_.positions);
+  robot_state_->updateLinkTransforms();
+  const auto velocity = posture_velocity(
+    robot_state_->getJacobian(group_), last_.positions, posture_rest_, posture_gain_,
+    posture_max_speed_);
+  state.positions += velocity * period();
+  state.velocities += velocity;
 }
 
 void ServoStreamer::shape(KinematicState & state)

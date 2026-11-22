@@ -1,6 +1,7 @@
 #ifndef FER_MOVEIT__CORE__FOLLOW_LAW_HPP_
 #define FER_MOVEIT__CORE__FOLLOW_LAW_HPP_
 
+#include <Eigen/Dense>
 #include <Eigen/Geometry>
 #include <deque>
 #include <optional>
@@ -40,6 +41,18 @@ struct Workspace
 Eigen::Matrix<double, 6, 1> follow_twist(
   const Eigen::Isometry3d & tcp, const Eigen::Isometry3d & goal,
   const Eigen::Vector3d & goal_velocity, const FollowGains & gains);
+
+/// \brief Joint velocity that turns the arm towards a rest posture without moving the TCP.
+///
+/// -gain * N * (q - rest), capped at max_speed (norm, rad/s); N = I - J⁺J projects onto the null
+/// space of the 6 x n Jacobian \p jacobian, so to first order the end effector does not move. On
+/// the 7-joint arm that is the elbow's swivel around the shoulder-wrist line. A Cartesian stream
+/// (Servo: pseudo-inverse) leaves it free, and it drifts a little with every cycle of a periodic
+/// motion (pseudo-inverse control is not cyclic) until the arm runs into a singular posture.
+/// \return zero if \p gain is 0; one value per joint.
+Eigen::VectorXd posture_velocity(
+  const Eigen::MatrixXd & jacobian, const Eigen::VectorXd & q, const Eigen::VectorXd & rest,
+  double gain, double max_speed);
 
 /// \brief Velocity of a moving point from its position samples.
 ///

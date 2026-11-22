@@ -52,6 +52,15 @@ fer_moveit_motion_server:
         max_acceleration: [15.0, 7.5, 10.0, 12.5, 15.0, 20.0, 20.0]
         max_jerk: [7500.0, 3750.0, 5000.0, 6250.0, 7500.0, 10000.0, 10000.0]
 
+    # /motion/follow: posture term. Servo leaves the elbow's swivel (the 7th, spare degree of
+    # freedom) free, and over many cycles of a periodic hand it drifts into a singular posture
+    # (22 Nov: Servo slowed after ~180 s of sine). This null-space velocity turns the arm back
+    # towards follow_posture_rest without moving the TCP. 0 = off (22 Nov, gain 1: no drift in
+    # 240 s, tracking and the jump test unchanged).
+    follow_posture_gain: 1.0            # 1/s
+    follow_posture_max_speed: 0.2       # rad/s, norm of the posture velocity
+    follow_posture_rest: [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]  # rad, the ready pose
+
     # /motion/follow: MoveIt Servo, run as a library (adapters/servo_streamer).
     moveit_servo:
       move_group_name: fer_arm

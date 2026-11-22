@@ -52,6 +52,25 @@ Eigen::Matrix<double, 6, 1> follow_twist(
   return twist;
 }
 
+Eigen::VectorXd posture_velocity(
+  const Eigen::MatrixXd & jacobian, const Eigen::VectorXd & q, const Eigen::VectorXd & rest,
+  double gain, double max_speed)
+{
+  if (gain == 0.0)
+  {
+    return Eigen::VectorXd::Zero(q.size());
+  }
+  const Eigen::MatrixXd pinv = jacobian.completeOrthogonalDecomposition().pseudoInverse();
+  const Eigen::MatrixXd null = Eigen::MatrixXd::Identity(q.size(), q.size()) - pinv * jacobian;
+  Eigen::VectorXd velocity = -gain * (null * (q - rest));
+  const double norm = velocity.norm();
+  if (norm > max_speed)
+  {
+    velocity *= max_speed / norm;
+  }
+  return velocity;
+}
+
 VelocityEstimator::VelocityEstimator(double time_constant) : time_constant_(time_constant) {}
 
 bool VelocityEstimator::update(double t, const Eigen::Vector3d & position)

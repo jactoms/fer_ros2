@@ -347,4 +347,66 @@ TEST(VelocityFade, StaleVelocityNoLongerCarriesTheTcpOn)
   EXPECT_GT(after, 0.0);  // the first 0.05 s are still fed forward (a late sample is no dropout)
 }
 
+namespace
+{
+
+// A fixed 6 x 7 Jacobian of full rank (one-dimensional null space, as on the FER).
+Eigen::MatrixXd seven_joint_jacobian()
+{
+  Eigen::MatrixXd jacobian(6, 7);
+  jacobian << 0.0, 0.3, 0.0, -0.2, 0.0, 0.1, 0.0,  //
+    0.4, 0.0, 0.4, 0.0, 0.1, 0.0, 0.0,             //
+    0.0, -0.4, 0.0, 0.3, 0.0, 0.1, 0.0,            //
+    0.0, 0.0, 0.7, 0.0, -0.7, 0.0, 0.3,            //
+    0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0,            //
+    1.0, 0.0, 0.7, 0.0, 0.7, 0.0, -0.9;
+  return jacobian;
+}
+
+}  // namespace
+
+TEST(PostureVelocity, ZeroGainIsOff)
+{
+  const Eigen::VectorXd q = Eigen::VectorXd::Constant(7, 0.3);
+  const auto v = posture_velocity(seven_joint_jacobian(), q, Eigen::VectorXd::Zero(7), 0.0, 1.0);
+  EXPECT_EQ(v.size(), 7);
+  EXPECT_NEAR(v.norm(), 0.0, 1e-12);
+}
+
+TEST(PostureVelocity, DoesNotMoveTheTcp)
+{
+  const auto jacobian = seven_joint_jacobian();
+  const Eigen::VectorXd q = (Eigen::VectorXd(7) << 0.2, -0.5, 0.4, -2.0, 0.1, 1.6, 0.5).finished();
+  const auto v = posture_velocity(jacobian, q, Eigen::VectorXd::Zero(7), 1.0, 10.0);
+  EXPECT_GT(v.norm(), 1e-3);                      // there is a null-space part to correct
+  EXPECT_NEAR((jacobian * v).norm(), 0.0, 1e-9);  // and correcting it moves the TCP by nothing
+}
+
+TEST(PostureVelocity, TurnsTheArmBackToRest)
+{
+  // Integrate with a fixed Jacobian: the null-space part of q - rest decays like exp(-gain t);
+  // the rest (what the TCP needs) stays.
+  const auto jacobian = seven_joint_jacobian();
+  const Eigen::MatrixXd null =
+    Eigen::MatrixXd::Identity(7, 7) -
+    jacobian.completeOrthogonalDecomposition().pseudoInverse() * jacobian;
+  const Eigen::VectorXd rest = Eigen::VectorXd::Zero(7);
+  Eigen::VectorXd q = null * Eigen::VectorXd::Constant(7, 0.5) + Eigen::VectorXd::Constant(7, 0.1);
+  const double before = (null * (q - rest)).norm();
+  const Eigen::VectorXd tcp_part = q - null * q;
+  for (int i = 0; i < 300; ++i)  // 3 s at 10 ms, gain 1/s
+  {
+    q += posture_velocity(jacobian, q, rest, 1.0, 10.0) * 0.01;
+  }
+  EXPECT_LT((null * (q - rest)).norm(), 0.06 * before);  // exp(-3) = 0.05
+  EXPECT_NEAR((q - null * q - tcp_part).norm(), 0.0, 1e-9);
+}
+
+TEST(PostureVelocity, IsCapped)
+{
+  const Eigen::VectorXd q = (Eigen::VectorXd(7) << 2.0, -0.5, 2.0, -2.0, 1.0, 1.6, 2.0).finished();
+  const auto v = posture_velocity(seven_joint_jacobian(), q, Eigen::VectorXd::Zero(7), 50.0, 0.2);
+  EXPECT_NEAR(v.norm(), 0.2, 1e-9);
+}
+
 }  // namespace fer_moveit
