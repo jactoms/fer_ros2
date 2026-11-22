@@ -1,6 +1,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "fer_moveit/adapters/move_group_client.hpp"
 #include "fer_moveit/adapters/robot_mode_monitor.hpp"
@@ -40,10 +41,15 @@ int main(int argc, char ** argv)
       return 1;
     }
   }
-  // MoveIt Servo for /motion/follow, created on the first Follow goal.
+  // MoveIt Servo for /motion/follow, created on the first Follow goal. Mock hardware has no
+  // effort trajectory controller to stream into: /motion/follow answers UNSUPPORTED there.
+  fer_moveit::MotionServer::StreamerFactory make_streamer;
+  if (hardware != "mock")
+  {
+    make_streamer = [node] { return std::make_unique<fer_moveit::ServoStreamer>(node); };
+  }
   fer_moveit::MotionServer server(
-    node, world_model, move_group, robot_mode.get(), group,
-    [node] { return std::make_unique<fer_moveit::ServoStreamer>(node); });
+    node, world_model, move_group, robot_mode.get(), group, std::move(make_streamer));
 
   rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 4);
   executor.add_node(node);
