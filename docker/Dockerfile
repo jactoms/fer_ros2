@@ -201,16 +201,6 @@ RUN if [ "$WITH_MUJOCO" = "1" ]; then \
         mujoco==${MUJOCO_PY_VERSION}; \
     fi
 
-# Venv of mujoco_ros2_control's URDF -> MJCF converter (~/.ros/ros2_control/.venv), built here
-# instead of on the first launch in every container. It lacks pycollada, which trimesh needs
-# for the FER's .dae meshes: without it hardware:=mujoco dies with
-# "ImportError: missing pip install pycollada".
-RUN if [ "$WITH_MUJOCO" = "1" ]; then \
-        /home/${USER}/deps_ws/install/lib/mujoco_ros2_control/robot_description_to_mjcf.sh \
-        --install-only && \
-        /home/${USER}/.ros/ros2_control/.venv/bin/pip install --no-cache-dir pycollada; \
-    fi
-
 ##############################################################################
 ##                                 Build ROS                                ##
 ##############################################################################
