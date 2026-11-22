@@ -28,9 +28,12 @@ def launch_setup(context, *args, **kwargs) -> List[Node]:
         executable='fer_moveit_streamer_check',
         name='fer_moveit_streamer_check',
         output='both',
+        # Quoted on the command line: in the parameter file launch_ros writes, an unquoted y
+        # would be read as the YAML boolean true.
+        ros_arguments=['-p', f"axis:='{check['axis']}'"],
         parameters=moveit_parameters() + [
             servo_parameters(params_file),
-            {'axis': check['axis'], 'distance': float(check['distance']),
+            {'distance': float(check['distance']),
              'speed': float(check['speed']), 'use_sim_time': True}],
     )]
 
