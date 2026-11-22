@@ -38,7 +38,12 @@ def moveit_parameters(load_gripper: str = 'true', ee_id: str = 'franka_hand') ->
 
 
 def servo_parameters(params_file: str) -> Dict:
-    """Return the moveit_servo block of a motion server parameters file."""
+    """
+    Return what ServoStreamer reads from a motion server parameters file.
+
+    The moveit_servo block and the joint shaping (follow_shaping_profile, follow_shaping).
+    """
     with open(params_file) as f:
         params = yaml.safe_load(f)['fer_moveit_motion_server']['ros__parameters']
-    return {'moveit_servo': params['moveit_servo']}
+    names = ('moveit_servo', 'follow_shaping_profile', 'follow_shaping')
+    return {name: params[name] for name in names if name in params}
