@@ -1,21 +1,58 @@
 # Status
 
-Updated: 2026-10-13
+Updated: 2026-11-05
 
 ## Current step
+
+Real-robot repeat runs (2026-11-05): PickPlace repeated with a box put back by hand
+between cycles, mock perception. Two failures fixed; with both fixes the real-robot repeat run
+succeeded:
+- **Stale object after a hand reset.** The placed box stayed FREE at the place spot (pick
+  target and collision object for 30 s) while the box put back became a new id; the next place
+  then failed in planning. Fix: a FREE object missed by `lost_after_misses` snapshots in a row
+  (default 1) becomes LOST, leaves the planning scene, and an unmatched detection of its class
+  takes it over under the same id (`fer_world_model`). The workarounds (`Sleep 3000`,
+  `world_model_repeat.yaml` with `removal_timeout: 1.0`) are gone.
+- **Lift after the grasp failed** with `CheckStartStateCollision: box_1 - table` (diagnosed in
+  `docs/2026-10-26_Observations.md`). Fix: MoveToPose/MoveToJoints plan from one sample of
+  the measured joints, so the held-contact allowance and the start-state check see the same
+  state; `held_contacts` logs the allowed pairs (`fer_moveit`).
+- `PickPlace` places from (0.40, 0.40), 0.12 m apart in x.
+- Goal payload numbers go to the blackboard as text and are converted by the reading port,
+  so an integer fits `unsigned` ports (`Delay` in `PickPlaceRepeat`) as well as `int` ones.
+- Mock objects per setup: `mock_objects_sim.yaml` (MuJoCo scene) and
+  `mock_objects_real.yaml`, chosen by `hardware`.
+
+`colcon test` passes for `fer_world_model`, `fer_behavior_trees`, `fer_moveit` and
+`fer_ros2_bringup`; CI passes. `PickPlace` runs in MuJoCo with `mock_objects_sim.yaml`. Not
+yet run: `PickPlaceRepeat` on the real robot with integer `cycles` and `reset_delay_ms`. The
+`PickPlaceRepeat` delay is fixed: the robot moves again when it runs out, whether the
+workspace is clear or not.
 
 Single repository `fer_ros2` (2026-10-13): the eight package repositories are merged with
 their full history into `ros2_ws/src`; the state before the merge is tag `jazzy-0.1.0`. The
 Dockerfile clones libfranka and the externals at their pins into `~/deps` and `~/deps_ws`;
-MuJoCo is built with `WITH_MUJOCO=1` (default on x86_64). The description CI runs from the
-repository root. Image built from scratch and the stack verified on x86_64 (PickPlace
-SUCCESS in MuJoCo) and on the Orin (real robot).
+MuJoCo is built with `WITH_MUJOCO=1` (default on x86_64). Image built from scratch and the
+stack verified on x86_64 (PickPlace SUCCESS in MuJoCo) and on the Orin (real robot).
 
 Released `jazzy-0.2.0` (2026-10-13): `main` is the default branch. Rulesets protect
 `jazzy_devel` (pull request, 1 approval, check `description-invariant`), `main` (updates by
-Georg only) and the `jazzy-*` tags. The eight package repositories were deleted on GitHub;
+Admin only) and the `jazzy-*` tags. The eight package repositories were deleted on GitHub;
 their history is in `ros2_ws/src`.
-Next step: CI for the whole stack, package versions and changelog.
+
+CI for the whole stack (2026-10-13): `.github/workflows/fer_ros2.yml`, job `build-and-test`,
+builds `docker/Dockerfile` with the GitHub Actions layer cache and runs `colcon test` for every
+package inside the image, on x86_64 (`WITH_MUJOCO=1`) and on aarch64 (`ubuntu-24.04-arm`,
+`WITH_MUJOCO=0`, the Orin image). Triggers: pull requests, pushes to `jazzy_devel` and `main`,
+by hand, and weekly without cache. First run green on both architectures. `colcon test` passes
+for every package, the driver included (license headers added).
+
+`hardware:=mock` (2026-10-13): `mock_components/GenericSystem`, position only, no physics,
+accepted up to `fer_manipulation.launch.py`. The launch test
+`fer_ros2_bringup/test/manipulation_mock_test.launch.py` starts `fer_manipulation` on mock
+and waits for the world model, grasp planner, motion server and gripper server; it passes in
+a local container and runs in CI with the rest of `colcon test`.
+Next step: package versions and changelog.
 
 All own C++ code is formatted with clang-format 18 (braces on their own line) since
 2026-10-12: one `.clang-format` in `ros2_ws/src`.
@@ -33,15 +70,20 @@ All own C++ code is formatted with clang-format 18 (braces on their own line) si
 | 8.6 Bringup | done |
 | 8.7 Removal and renames | implemented, committed, MuJoCo verified; real-robot check and GitHub renames done, Fresh import verified on PC and Orin |
 
-Kept local, outside git: `Repo_Hotfixes.md` in the old `fer_ros2_docker` folder.
 
 ## Next
 
-1. CI for the whole stack, package versions and changelog (all `package.xml` are at
-   0.0.0); decide before the next release. Open points in `docs/Platform.md` §8.3.
-2. `fer_ros2_driver` packages: `colcon test` still fails on `copyright` (8 files in
-   `franka_hardware`, 1 in `franka_semantic_components` without a license header). It
-   predates the reformat.
+0. Open items of the 2026-11-05 repeat runs (`docs/Platform.md` §8.2 item 10): recovery
+   while holding an object;
+   place checked before the grasp and `may_touch` per segment as executed; success rules
+   (not-seen object, no objects); `planner_id` and workspace bounds in requests.
+1. CI follow-up: add `build-and-test (x86_64)` and `build-and-test (aarch64)` as required
+   checks on `jazzy_devel`; watch the first GitHub runs of the mock launch test (the motion
+   server waits 10 s for `move_group`, see `docs/Platform.md` §8.2 item 3); later remove
+   `description-invariant` and `fer_description.yml`, whose test `build-and-test` also runs,
+   and update the CI lines in `CLAUDE.md` and `CONTRIBUTING.md`.
+2. Package versions and changelog (all `package.xml` are at 0.0.0); decide before the next
+   release. Open points in `docs/Platform.md` §8.3.
 3. Refinements observed in sim and real runs (`docs/Platform.md` §8.2) and the open items
    below. The three reviews of 2026-10-12 (code issues, tests and CI, reuse from
    `multipanda_ros2`) are not yet in the list below.
@@ -57,7 +99,12 @@ Kept local, outside git: `Repo_Hotfixes.md` in the old `fer_ros2_docker` folder.
 - **Catalog `box: {force: 5.0}`** is shared with the real robot. Alternative: stiffer object
   contacts in `pick_place_world.xml` (solref 0.004 1, solimp 0.95 0.99 0.001), back to 15 N.
 - Grasp closing speed is tied to force (finger trajectory controller later).
-- A failed lift leaves the box attached (no release fallback).
+- A failed lift leaves the box attached (no release fallback). The start-state cause of
+  2026-10-26 is fixed; other lift failures still end with the box in the hand.
+- No occupancy map: a missed object becomes LOST and is no obstacle. Accepted with mock
+  perception; a real camera needs a visibility check and `lost_after_misses` > 1.
+- Mock perception: a LOST box is never found again (put it back at its file pose); a box put
+  back by hand must be in place before the next detection (fixed `reset_delay_ms`).
 - A failed Release makes the watch mark the object LOST.
 - World model can disagree with the physical grasp if `SetObjectStatus` fails or a Grasp is
   cancelled after closing.
@@ -70,9 +117,14 @@ Kept local, outside git: `Repo_Hotfixes.md` in the old `fer_ros2_docker` folder.
 - Fixed executor thread count
 - grasp-versus-world-model mismatch - needs to be watched at runtime
 - MuJoCo scene objects and how they are added to the world_model when sim is used
+- **MuJoCo bump:** `mujoco_ros2_control` (pin `375a5db`, 2026-03-08; HEAD `6838a7f`,
+  release 0.1.4) and `mujoco_vendor` move together. Upstream still does not install
+  `pycollada` (needed for `.dae` meshes); the Dockerfile installs it (`PYCOLLADA_VERSION`)
+  until upstream does.
 - `fer_moveit` `test_contract` failed 2 of 17 once when its tests ran in the same
   container together with `fer_behavior_trees`, and passed in every separate run (2026-10-12).
-  Likely tests of different packages sharing a DDS domain; not yet investigated.
+  Likely tests of different packages sharing a DDS domain; not yet investigated. CI tests
+  one package at a time (`--executor sequential`).
 - Speed and separation monitoring: `speed_scaling` is fixed per motion when it is planned and
   cannot change during execution, so SSM (speed depending on the distance to a person) needs a
   mechanism that scales a running motion. How `speed_and_separation_monitoring` fits is open.
@@ -110,3 +162,15 @@ Kept local, outside git: `Repo_Hotfixes.md` in the old `fer_ros2_docker` folder.
 | 2026-10-13 | `main` = releases tagged `jazzy-<version>`; `jazzy_devel` = development through pull requests | A plain clone gets verified code; one branch for all work |
 | 2026-10-13 | One `.clang-format` in `ros2_ws/src` | The container sees only `ros2_ws`; the clang-format tests read it by path |
 | 2026-10-13 | Old package repositories deleted, not archived | They served no purpose; their history is in `ros2_ws/src` |
+| 2026-10-13 | CI builds `docker/Dockerfile` and runs `colcon test` in the image | The Dockerfile is the only place the pins live; CI tests the image the robot runs, and a red run reproduces with `build_image.sh` |
+| 2026-10-13 | CI images: x86_64 with MuJoCo, aarch64 without | The two images that are used; other combinations would block merges over setups nobody runs |
+| 2026-10-13 | CI tests run with Cyclone defaults (`CYCLONEDDS_URI` unset) | `env/` is not in the image, and the config's 10 MB minimum receive buffer needs a raised `net.core.rmem_max` that GitHub runners do not have |
+| 2026-10-13 | Driver license headers by origin: Franka where the file or its header already names it, Seongjin Bien (multipanda_ros2) otherwise | `ament_copyright` passes; credit follows the upstream history |
+| 2026-10-13 | Own packages carry no per-file license headers; the always-skipped `test_copyright.py` removed from the Python packages | The repository `LICENSE` covers them; the CMake packages already switch the check off |
+| 2026-11-05 | A FREE object missed `lost_after_misses` snapshots in a row becomes LOST; default 1 | Negative evidence, as real perception stacks do: a stale copy blocked the place and was picked; LOST already leaves the scene and is taken over by an unmatched detection. A counter, so a camera can require several misses |
+| 2026-11-05 | Object ids stay owned by the world model; no ids from perception | Identical boxes cannot be told apart by any detector; tasks select by class and properties |
+| 2026-11-05 | No occupancy layer for now; one miss suffices with mock perception | The mock sees every object; the occupancy map (collision safety independent of recognition) comes with a real camera |
+| 2026-11-05 | MoveToPose/MoveToJoints plan from one sample of the measured joints | The held-contact allowance and `move_group`'s start-state check must see the same state |
+| 2026-11-05 | Goal payload numbers go to the blackboard as text | BT.CPP checks a typed entry against the port type at tree creation, so an `int` entry failed `unsigned` ports (`Delay`); text is converted by each port, as an XML attribute is |
+| 2026-11-05 | Mock objects split into `mock_objects_sim.yaml` and `mock_objects_real.yaml`, selected by `hardware` | The real setup (one 7 cm box) and the MuJoCo scene differ; one file broke MuJoCo |
+| 2026-10-13 | `hardware:=mock` with an own overlay (`mock_components/GenericSystem`, position only) | Launch tests without MuJoCo or the robot; upstream's `use_fake_hardware` block has no finger joint, so no gripper controller could run |

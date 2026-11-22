@@ -9,8 +9,9 @@ work is tracked in [`STATUS.md`](STATUS.md).
 
 A ROS 2 Jazzy stack for the Franka Emika Robot (FER / Panda, libfranka 0.9.2) that picks and
 places objects with behavior trees. The same packages run on the real robot and in MuJoCo.
-The hardware is a launch argument, `hardware:=real|mujoco`. The real robot is driven from a
-Jetson Orin AGX (aarch64). The simulation runs on x86_64.
+The hardware is a launch argument, `hardware:=real|mujoco|mock`; `mock` has no physics and
+serves launch tests. The real robot is driven from a Jetson Orin AGX (aarch64). The simulation
+runs on x86_64.
 
 ```
 fer_behavior_trees        order, choices, retries (PickPlace, Pick, Place)
@@ -35,11 +36,26 @@ one hardware overlay.
 | `PickPlace` with mock perception | SUCCESS (2026-10-12, 2026-10-13) | SUCCESS (2026-10-12; stack run 2026-10-13) |
 | `speed_scaling` from the goal payload | tested | default speed (0.3) tested |
 
-`colcon test` passes for `fer_interfaces`, `fer_world_model`, `fer_gripper_server`,
-`fer_grasp_planner`, `fer_moveit`, `fer_behavior_trees` and `fer_ros2_bringup` (unit tests,
-contract tests against fake neighbours, `move_group` launch test, description invariants,
-`ament_flake8` / `ament_pep257` / clang-format). The driver packages build and run but fail
-`colcon test` on `copyright`.
+`colcon test` passes for every package, the driver included: unit tests, contract tests
+against fake neighbours, the `move_group` launch test, the `fer_manipulation` launch test on
+`hardware:=mock`, description invariants, and the linters (`ament_flake8`, `ament_pep257`,
+clang-format, `copyright` for the driver). `cppcheck` skips itself on Ubuntu 24.04
+(cppcheck 2.13 performance issues).
+
+**CI.** `.github/workflows/fer_ros2.yml`, job `build-and-test`, builds `docker/Dockerfile` and
+runs `colcon test` for every package inside the image, one package at a time, on two runners:
+
+| Check | Runner | Image |
+|---|---|---|
+| `build-and-test (x86_64)` | `ubuntu-24.04` | `WITH_MUJOCO=1`, as on the x86_64 workstation |
+| `build-and-test (aarch64)` | `ubuntu-24.04-arm` | `WITH_MUJOCO=0`, as on the Orin |
+
+It runs on pull requests, on pushes to `jazzy_devel` and `main`, by hand, and weekly without
+the layer cache (picks up new Jazzy package releases and refreshes the cache). Only the layers
+from `COPY ros2_ws/src` on are rebuilt when only code changes. Tests run with Cyclone DDS
+defaults: `env/cyclone_dds.xml` is not part of the image. On failure the test results and logs
+are uploaded for 7 days. `.github/workflows/fer_description.yml` (`description-invariant`)
+still runs the description test on its own.
 
 Not yet verified: see §8.1.
 
@@ -91,15 +107,20 @@ colcon build --symlink-install --merge-install --cmake-args -DFranka_DIR:PATH=/h
 
 | Launch file (`fer_ros2_bringup`) | Adds |
 |---|---|
-| `fer_real_ros2_control.launch.py` / `fer_mujoco_ros2_control.launch.py` | description, `robot_state_publisher`, ros2_control, controllers (motion and gripper controllers inactive), real: `franka_gripper` node |
+| `fer_real_ros2_control.launch.py` / `fer_mujoco_ros2_control.launch.py` / `fer_mock_ros2_control.launch.py` | description, `robot_state_publisher`, ros2_control, controllers (motion and gripper controllers inactive), real: `franka_gripper` node |
 | `fer_moveit_and_control.launch.py` | `move_group` and RViz; no controller activated |
-| `fer_manipulation.launch.py` | world model (mock perception), grasp planner, motion server, gripper server; activates `<arm_control_type>_trajectory_controller` and, in MuJoCo, `gripper_<hand_control_type>_controller` |
-| `fer_manipulation_bt.launch.py` | BT server (`/execute_tree`) |
+| `fer_manipulation.launch.py` | world model (mock perception), grasp planner, motion server, gripper server; activates `<arm_control_type>_trajectory_controller` and, in MuJoCo and mock, `gripper_<hand_control_type>_controller` |
+| `fer_manipulation_bt.launch.py` | BT server (`/execute_tree`); `real` and `mujoco` only |
 
 Each level declares every argument of the files it includes and forwards it, so the top level
-decides. `hardware` defaults to `mujoco`; `use_sim_time` follows it. `robot_ip` is required
-for `real`. The manipulation levels use `scenes/pick_place_world.xml` (robot on a table, the
-mock objects in place).
+decides. `hardware` defaults to `mujoco`; `use_sim_time` is true for `mujoco` only. `robot_ip`
+is required for `real`. The manipulation levels use `scenes/pick_place_world.xml` (robot on a
+table, the mock objects in place).
+
+`hardware:=mock` uses `mock_components/GenericSystem`: every position command is copied to
+the position state, nothing has mass or contact. It needs `arm_control_type:=position` and
+`hand_control_type:=position`; the effort controllers are not loaded. It brings the stack up
+without MuJoCo or the robot, for launch tests; a grasp on mock closes on nothing.
 
 ```bash
 ros2 launch fer_ros2_bringup fer_manipulation_bt.launch.py hardware:=mujoco
@@ -109,14 +130,15 @@ ros2 action send_goal /execute_tree btcpp_ros2_interfaces/action/ExecuteTree "{t
 
 Controllers follow `<interface>_<type>_controller`:
 
-| Controller | real | mujoco |
-|---|---|---|
-| `joint_state_broadcaster` | active | active |
-| `franka_robot_state_broadcaster` | active | — |
-| `effort_trajectory_controller` | inactive | inactive |
-| `velocity_trajectory_controller` | inactive | — |
-| `position_trajectory_controller` | inactive | inactive |
-| `gripper_position_controller`, `gripper_effort_controller` | — (`franka_gripper` node) | inactive |
+| Controller | real | mujoco | mock |
+|---|---|---|---|
+| `joint_state_broadcaster` | active | active | active |
+| `franka_robot_state_broadcaster` | active | — | — |
+| `effort_trajectory_controller` | inactive | inactive | — |
+| `velocity_trajectory_controller` | inactive | — | — |
+| `position_trajectory_controller` | inactive | inactive | inactive |
+| `gripper_position_controller` | — (`franka_gripper` node) | inactive | inactive |
+| `gripper_effort_controller` | — (`franka_gripper` node) | inactive | — |
 
 Diagnostics for the real robot: `fer_ros2_bringup/scripts/fer_sanity_check.py` (rates, TF,
 control loop alive) and `fer_mode_switch_check.py` (effort ↔ velocity switch).
@@ -142,14 +164,21 @@ model; the blackboard holds object ids only.
 
 **World model.** Takes `vision_msgs/Detection3DArray` on `/perception/detections`, associates
 detections with known objects (same class, centre within 0.05 m), owns object ids, tracks
-status FREE / GRASPED / LOST, removes objects missing for 30 s. A fixed table (top at `base`
-z = 0) is loaded from `fixtures.yaml`. Perception is a mock: `mock_perception` publishes the
-objects of `config/mock_objects.yaml` at 5 Hz. On the real robot the objects must stand at
-those poses.
+status FREE / GRASPED / LOST, removes objects missing for 30 s. A FREE object missed by
+`lost_after_misses` snapshots in a row (detection or refine; default 1, as the mock sees every
+object) becomes LOST: it leaves the planning scene and the tree's object list, and an unmatched
+detection of its class, also in the same snapshot, takes it over under the same id. So a box
+moved by hand keeps its id and leaves no stale copy behind. Ids are owned by the world model;
+detections carry none, and identical objects are told apart by pose only. A fixed table (top
+at `base` z = 0) is loaded from `fixtures.yaml`. Perception is a mock: `mock_perception`
+publishes a fixed object list at 5 Hz, `config/mock_objects_sim.yaml` (the MuJoCo scene) or
+`config/mock_objects_real.yaml` (hardware:=real), chosen by the bringup. On the real robot
+the objects must stand at those poses.
 
 **Gripper server.** One adapter per hardware. Real: `franka_gripper` `Move` / `Grasp` on
 `/fer_gripper`, grasp evidence from `is_grasped`. MuJoCo: `GripperCommand` on
-`gripper_effort_controller`, grasp evidence from the finger width. A successful grasp marks
+`gripper_effort_controller`, grasp evidence from the finger width. Mock: the same adapter on
+`gripper_position_controller` (`config/gripper_mock.yaml`). A successful grasp marks
 the object GRASPED, relative to `fer_hand_tcp`; a watch marks it LOST when the grip is gone.
 
 **Grasp planner.** Top-down candidates from the object's box (0, 2 or 4 per object), force per
@@ -161,11 +190,13 @@ world model into `move_group`'s planning scene, plans plan-only (OMPL `RRTConnec
 paths and joint targets, Pilz `LIN` for straight paths), executes through `ExecuteTrajectory`,
 and stops a replaced or cancelled motion with `"stop"` on `/trajectory_execution_event`;
 `CANCELLED` is reported once the arm rests. `may_touch` allows contact with named objects for
-one plan. `ROBOT_ERROR` (reflex, user stop) on the real robot only.
+one plan. A straight path with a held object also allows the held object's contacts at the
+start state (a box resting on the table), checked on the same joint sample as `move_group`'s
+start-state check. `ROBOT_ERROR` (reflex, user stop) on the real robot only.
 
 **Behavior trees.** `PickPlace` (`trees/manipulation/`): detect, query objects of
 `target_class`, per object `Pick` (retried `pick_attempts` times; not picked → next object),
-`Place` in a row of slots, then home. SUCCESS only if every object was placed. Payload keys:
+`Place` in a row of slots (first at (0.40, 0.40) in `base`, 0.12 m apart in x), then home. SUCCESS only if every object was placed. Payload keys:
 `target_class`, `pick_attempts`, optional `speed_scaling` (default 0.3, BT server parameter).
 Named poses `home` and `view` in `config/poses.yaml`.
 
@@ -182,8 +213,15 @@ Named poses `home` and `view` in `config/poses.yaml`.
 
 ## 7. Known limitations
 
-- **Perception** is a mock: fixed detections from a file. An object outside the camera's view
-  would count as missed and be removed after 30 s; there is no real perception node yet.
+- **Perception** is a mock: fixed detections from a file; there is no real perception node
+  yet. It cannot find a LOST (dropped) object; that object must be put back at its file pose.
+  A box put back by hand must be in place before the next detection, otherwise the mock
+  reports it at its file pose while it still stands at the place spot.
+- **No occupancy map:** only world-model objects are obstacles. A missed object becomes LOST
+  and is no longer an obstacle. A real camera needs a visibility check (count a miss only
+  where the object should have been seen) and `lost_after_misses` > 1.
+- **Collision checks happen at planning time only:** every Pilz LIN waypoint (about every
+  0.1 s) is checked by `ValidateSolution`; nothing is checked during execution.
 - **Planning failures** are always reported as `NO_PATH`: `move_group`'s plan-only path
   replaces planner error codes, so `UNREACHABLE` is never seen.
 - **Straight paths** (Pilz LIN) are checked against the quarter-datasheet joint limits; near
@@ -216,15 +254,20 @@ Named poses `home` and `view` in `config/poses.yaml`.
   tolerances.
 - A failed grasp followed by a successful retry.
 - `fer_moveit`'s `test_contract` failed once when run together with another package's tests
-  (likely a shared DDS domain).
+  (likely a shared DDS domain). CI tests one package at a time.
+- The mock launch test on GitHub runners: the motion server gives `move_group` 10 s to come
+  up (§8.2 item 3).
 
 ### 8.2 Refinement (observed in recent runs)
 
 1. At `speed_scaling` 0.6 planning runs into joint limits and produces odd arm motions.
 2. After two failed grasps on the first object the tree moves on to the next object. This is
    the current policy; aborting instead is a decision still to make.
-3. Start-up race between the simulation and the gripper server on the first start; the motion
-   server is also not ordered after controller activation (10 s startup timeout).
+3. Start-up: the motion and gripper servers start after controller activation. The MJCF
+   converter's Python packages and `pycollada` are installed in the image (`~/.ros`), so the
+   first MuJoCo start is as fast as later ones. Bump `mujoco_ros2_control` and
+   `mujoco_vendor` together (HEAD `6838a7f` uses new variables of `mujoco_vendor`); upstream
+   still does not install `pycollada` at `6838a7f`, so the image keeps installing it.
 4. Pilz LIN hits joint acceleration limits at `speed_scaling` 1.0 (quarter-datasheet limits).
 5. Planned trajectories work but are often far from optimal (long joint-7 turns to the
    pre-grasp; `FindReachableGrasp` takes the first reachable candidate).
@@ -235,18 +278,29 @@ Named poses `home` and `view` in `config/poses.yaml`.
    start-up only but not declared read-only; fixed executor thread counts and polling
    intervals; `Gripper` is a `typing.Protocol` (ABC undecided).
 9. RViz logs `trajectory_visualization: No robot state or robot model loaded`.
+10. Real-robot repeat run (2026-11-05), still open:
+    - No recovery while holding an object: a failed lift or place leaves it in the hand
+      (put back, go home, or ask the operator; undecided).
+    - The place is checked only after the grasp; `FindReachable*` allows `may_touch` on
+      other segments than the trees execute.
+    - Success rules: a not-seen object is still retried `pick_attempts` times and counts as
+      a failure; no objects at all is SUCCESS.
+    - `move_group` warns that `planner_id` and the workspace bounds are not set in requests.
 
 ### 8.3 Infrastructure
 
-- **CI:** one workflow, `.github/workflows/fer_description.yml` (description invariants).
-  Missing: build and test of the whole stack, a `hardware:=mock` backend for launch tests
-  without MuJoCo or the robot, checks for duplicate package names and dependency direction.
+- **CI:** `build-and-test` (§2) is not yet a required check on `jazzy_devel`; the ruleset
+  requires `description-invariant` only. Once `build-and-test` is required,
+  `fer_description.yml` repeats a test it already runs and can go. Not checked: dependency
+  direction (servers depend only on `fer_interfaces`). Duplicate package names need no check;
+  colcon refuses to build with them. Possible later: `cppcheck` turned back on
+  (`AMENT_CPPCHECK_ALLOW_SLOW_VERSIONS=1`), a fast lint job, image publishing on release tags,
+  `hardware:=mock` in `fer_manipulation_bt.launch.py`.
 - **Conventions:** `main` holds releases tagged `jazzy-<version>`, `jazzy_devel` takes pull
   requests. Package versions and a CHANGELOG for the platform are not settled; only the
   driver has a CHANGELOG.
 - **Releases:** `jazzy-0.1.0` freezes the state before the merge. The first `fer_ros2`
-  release is `jazzy-0.2.0`. Providing the code outside needs a public repository.
-- **Driver lint:** `copyright` (9 files without a license header).
+  release is `jazzy-0.2.0`.
 
 ### 8.4 Deferred features
 

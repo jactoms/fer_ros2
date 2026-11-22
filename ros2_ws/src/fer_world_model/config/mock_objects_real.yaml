@@ -1,0 +1,22 @@
+# Detections published by mock_perception on the real robot (hardware:=real). Pose =
+# bounding-box center in the node's frame_id, size = bounding box [x, y, z] in m. No ids: the
+# world model assigns them. The objects must stand at these poses.
+
+detections:
+  - class_id: cylinder
+    score: 0.95
+    size: [0.04, 0.04, 0.10]
+    pose:
+      position: {x: 0.5, y: -0.25, z: 0.05}
+
+  - class_id: box
+    score: 0.95
+    size: [0.07, 0.07, 0.07]
+    pose:
+      position: {x: 0.4, y: -0.40, z: 0.035}
+
+  - class_id: sphere
+    score: 0.95
+    size: [0.06, 0.06, 0.06]
+    pose:
+      position: {x: 0.55, y: 0.10, z: 0.03}

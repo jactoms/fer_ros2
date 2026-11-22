@@ -35,8 +35,11 @@ Used:
   never reused.
 - **Held objects:** detections at a GRASPED object's position (the object seen in the
   hand) are dropped. GRASPED and fixed objects are never changed by detection.
-- **Not seen and removal:** an object that is not seen is listed in `not_seen` and not
-  changed. A 1 Hz sweep removes FREE and LOST objects missing for longer than
+- **Not seen and removal:** an object that is not seen is listed in `not_seen`. A FREE
+  object missed by `lost_after_misses` snapshots in a row (detection or refine) becomes
+  LOST: it leaves the planning scene, and an unmatched detection of its class, also in the
+  same snapshot, takes it over under the same id. So a box moved by hand keeps its id and
+  leaves no stale copy behind. A 1 Hz sweep removes FREE and LOST objects missing for longer than
   `removal_timeout`; the clock starts at the first snapshot that missed the object (for
   LOST: when it became LOST), so nothing is removed while no detection runs.
 - **One detection goal at a time:** a new `DetectObjects` or `RefineObject` goal ends the
@@ -54,7 +57,7 @@ ros2 launch fer_world_model world_model.launch.py perception:=mock
 | Argument | Default | Meaning |
 |---|---|---|
 | `perception` | `none` | `mock` also starts `mock_perception` |
-| `mock_objects_file` | `config/mock_objects.yaml` | detections published by the mock |
+| `mock_objects_file` | `config/mock_objects_sim.yaml` | detections published by the mock |
 | `fixtures_file` | `config/fixtures.yaml` | fixed objects; `''` for none |
 | `params_file` | `config/world_model.yaml` | node parameters |
 | `use_sim_time` | `true` | simulated clock |
@@ -70,6 +73,7 @@ ros2 launch fer_world_model world_model.launch.py perception:=mock
 | `association_gate` | 0.05 m | largest center distance for the same object |
 | `refine_gate` | 0.10 m | search radius around the object for `RefineObject` |
 | `min_score` | 0.5 | detections below are ignored |
+| `lost_after_misses` | 1 | snapshots in a row that miss a FREE object before it is LOST; 1 for mock perception, more for a camera, 0 = never |
 | `detection_timeout` | 5.0 s | wait for a snapshot |
 | `tf_timeout` | 0.1 s | |
 | `removal_timeout` | 30.0 s | missing objects are removed after this |
@@ -80,8 +84,10 @@ Fixtures are never matched, changed or removed.
 
 ## Mock perception
 
-`mock_perception` publishes `config/mock_objects.yaml` as `Detection3DArray` at 5 Hz:
-class, score, center pose and size, no ids. Parameters: `objects_file` (required),
+`mock_perception` publishes a list of objects as `Detection3DArray` at 5 Hz: class, score,
+center pose and size, no ids. `config/mock_objects_sim.yaml` matches the MuJoCo scene
+`pick_place_world.xml`; `config/mock_objects_real.yaml` is the setup on the real robot.
+`fer_manipulation.launch.py` picks one by `hardware`. Parameters: `objects_file` (required),
 `frame_id` (`base`), `rate` (5.0 Hz), `detection_topic`.
 
 ## Layout

@@ -42,7 +42,7 @@ public:
   /// Creates the Cartesian stage of /motion/follow on its first goal.
   using StreamerFactory = std::function<std::unique_ptr<CartesianStreamer>()>;
 
-  /// \param robot_mode null when the hardware reports no robot mode (MuJoCo).
+  /// \param robot_mode null when the hardware reports no robot mode (MuJoCo, mock).
   /// \param make_streamer empty: /motion/follow answers UNSUPPORTED.
   MotionServer(
     const rclcpp::Node::SharedPtr & node, WorldModelClient & world_model,
