@@ -1,9 +1,11 @@
 #include "fer_moveit/adapters/servo_streamer.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <moveit_servo/utils/common.hpp>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "fer_interfaces/msg/outcome.hpp"
@@ -19,9 +21,10 @@ using moveit_servo::StatusCode;
 namespace
 {
 
-constexpr char BASE_FRAME[] = "base";  // the TF root; twists are given in it
-constexpr double STATE_TIMEOUT = 1.0;  // s, wait for a current joint state at start()
-constexpr char NO_SHAPING[] = "off";   // follow_shaping_profile without Ruckig
+constexpr char BASE_FRAME[] = "base";       // the TF root; twists are given in it
+constexpr double STATE_TIMEOUT = 1.0;       // s, wait for a current joint state at start()
+constexpr double SUBSCRIBER_TIMEOUT = 2.0;  // s, wait for the controller's subscription at start()
+constexpr char NO_SHAPING[] = "off";        // follow_shaping_profile without Ruckig
 
 StreamStatus::Code classify(StatusCode code)
 {
@@ -122,12 +125,29 @@ double ServoStreamer::period() const { return servo_->getParams().publish_period
 void ServoStreamer::start()
 {
   // Catches a controller that is not loaded. A loaded but inactive JTC still subscribes and
-  // ignores the commands; that shows as an arm that does not move.
-  if (publisher_->get_subscription_count() == 0)
+  // ignores the commands; that shows as an arm that does not move. The publisher was created
+  // just before (first Follow goal, streamer check), and DDS discovery of the controller can
+  // still be running then: wait for it briefly instead of failing at once.
+  const auto begin = std::chrono::steady_clock::now();
+  const auto deadline = begin + std::chrono::duration<double>(SUBSCRIBER_TIMEOUT);
+  bool waited = false;
+  while (publisher_->get_subscription_count() == 0)
   {
-    throw MotionError(
-      Outcome::EXECUTION_FAILED, "nobody listens on " + std::string(publisher_->get_topic_name()) +
-                                   ": is the arm's trajectory controller loaded and active?");
+    if (std::chrono::steady_clock::now() >= deadline)
+    {
+      throw MotionError(
+        Outcome::EXECUTION_FAILED, "nobody listens on " +
+                                     std::string(publisher_->get_topic_name()) +
+                                     ": is the arm's trajectory controller loaded and active?");
+    }
+    waited = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  if (waited)
+  {
+    RCLCPP_INFO(
+      node_->get_logger(), "follow: trajectory controller found after %.2f s (discovery)",
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count());
   }
   if (!scene_monitor_->getStateMonitor()->waitForCurrentState(node_->now(), STATE_TIMEOUT))
   {
