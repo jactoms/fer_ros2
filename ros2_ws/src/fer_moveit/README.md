@@ -13,7 +13,8 @@ gripper loading.
 
 It also holds the MoveIt motion server of the FER platform,
 `fer_moveit_motion_server`, which serves the motion part of `fer_interfaces` through
-`move_group` (see [Motion server](#motion-server)).
+`move_group`, and `/motion/follow` through MoveIt Servo (see [Motion server](#motion-server)
+and [Follow](#follow-motionfollow)).
 
 ## Status
 
@@ -29,9 +30,11 @@ fer_moveit/
 │                            # fer_moveit_motion_server.yaml: motion server parameters
 ├── launch/
 │   ├── fer_move_group.launch.py            # move_group + optional RViz, with declared launch args
-│   └── fer_moveit_motion_server.launch.py  # motion server
+│   ├── fer_moveit_motion_server.launch.py  # motion server
+│   ├── fer_streamer_check.launch.py        # check of the Cartesian streamer (Servo + Ruckig)
+│   └── moveit_parameters.py                # robot model + Servo parameters for in-process MoveIt
 ├── include/fer_moveit/  # motion server: core/ (no ROS), adapters/, motion_server.hpp
-├── src/                        # motion server sources and main.cpp
+├── src/                        # motion server sources, main.cpp, streamer_check.cpp
 ├── test/                       # gtests; move_group_test.launch.py runs against a real move_group
 ├── rviz/
 │   └── moveit_conf.rviz     # RViz config tailored for this package
@@ -51,8 +54,8 @@ Declared in `package.xml`:
 - `moveit_ros_move_group`, `moveit_kinematics`, `moveit_planners_ompl`,
   `pilz_industrial_motion_planner`, `moveit_simple_controller_manager`
 - motion server: `rclcpp`, `rclcpp_action`, `fer_interfaces`, `moveit_msgs`,
-  `moveit_core`, `tf2_ros`, `tf2_geometry_msgs`; `franka_msgs` for `hardware:=real`
-  only (builds without it)
+  `moveit_core`, `tf2_ros`, `tf2_geometry_msgs`; `moveit_servo` and `ruckig` for
+  `/motion/follow`; `franka_msgs` for `hardware:=real` only (builds without it)
 
 Install everything declared in the manifest with `rosdep`:
 
@@ -122,6 +125,7 @@ of `move_group`: MoveIt plans and executes, the server adds validation, the worl
 | `/motion/move_to_pose` | action `fer_interfaces/MoveToPose` |
 | `/motion/move_to_joints` | action `fer_interfaces/MoveToJoints` |
 | `/motion/check_reachable` | service `fer_interfaces/CheckReachable` |
+| `/motion/follow` | action `fer_interfaces/Follow` (see [Follow](#follow-motionfollow)) |
 
 | Used | Purpose |
 |---|---|
@@ -133,6 +137,8 @@ of `move_group`: MoveIt plans and executes, the server adds validation, the worl
 | `/trajectory_execution_event` | `"stop"` on cancel or replacement |
 | `/joint_states`, TF | wait for rest; goal pose → `base` |
 | `/franka_robot_state_broadcaster/robot_state` | robot mode (`hardware:=real`) |
+| `/effort_trajectory_controller/joint_trajectory` | Follow: one short joint trajectory every 10 ms |
+| `/monitored_planning_scene` | Follow: Servo's collision check |
 
 From goal to motion:
 
@@ -166,6 +172,101 @@ From goal to motion:
 `CheckReachable` plans each target from the previous target's end configuration and
 never executes.
 
+### Follow (`/motion/follow`)
+
+Keeps the TCP at a fixed offset from a moving TF frame (e.g. a tracked hand) until the client
+cancels. No planning: every 10 ms the server computes a TCP velocity, MoveIt Servo (run as a
+library in the server's process, `adapters/servo_streamer`) turns it into a joint step, Ruckig
+(`core/joint_shaper`) shapes it within velocity, acceleration and jerk limits, and the result
+goes to the arm's `effort_trajectory_controller` as a short joint trajectory. The same
+controller as for planned motions: no controller switch, and the same on the real FER and in
+MuJoCo.
+
+**Goal** (`fer_interfaces/Follow`):
+
+| Field | Default | Meaning |
+|---|---|---|
+| `target_frame` | – | TF frame to follow, read again every cycle |
+| `offset` | identity | TCP position in `target_frame` (e.g. z 0.1 = 10 cm above the hand); its orientation is ignored for now |
+| `follow_orientation` | false | true → `UNSUPPORTED` (position only for now); the TCP keeps the orientation it had at goal start |
+| `speed_scaling` | 1.0 | (0, 1]; scales `follow_max_speed` and `follow_max_rotation_speed`. Below 1 the TCP can fall behind a moving hand |
+| `target_timeout` | 0.5 s | target not updated this long → `NOT_FOUND` |
+
+**Feedback:** `distance`, TCP to its goal position (m), every `follow_feedback_period`.
+
+**Each cycle:**
+
+1. Look up the target in `base`. Its own stamps decide whether a sample is new (the target may
+   run on another clock); stamp 0 = a static frame, always current.
+2. Goal = target × offset, with the start orientation. **Workspace:** goal outside the box
+   `follow_workspace_min/max` (away from the arm's singular regions) → the TCP holds the last
+   goal that was inside ("goal outside the workspace, holding") and follows again once it is
+   back inside.
+3. TCP velocity v = v_target + `follow_gain` × (goal − TCP), capped at `follow_max_speed` ×
+   `speed_scaling` (`core/follow_law`). The target velocity v_target (finite difference,
+   low-pass `follow_velocity_time_constant`) is fed forward only while the target is fresh:
+   in full for `follow_velocity_hold`, then faded to 0 over `follow_velocity_fade`. A tracker
+   that stops sending does not carry the TCP on.
+4. Servo: twist → joint step, with its collision check and singularity slow-down / stop
+   (`moveit_servo.lower_singularity_threshold`, `hard_stop_singularity_threshold`).
+5. **Posture term** (`follow_posture_gain` > 0): a null-space joint velocity
+   −k·(I − J⁺J)·(q − `follow_posture_rest`) is added. It does not move the TCP. It holds the
+   elbow of the 7-joint arm, which Servo leaves free: without it the elbow drifts a little with
+   every cycle of a periodic hand motion until Servo slows down near a singularity (sine hand:
+   after ~3 min). Not applied while Servo reports a halt.
+6. **Joint shaping** (`follow_shaping_profile`): Ruckig, velocity mode, all joints
+   time-synchronised; the 10 ms command never exceeds `follow_shaping.<profile>` (velocity,
+   acceleration, jerk per joint). `off` sends Servo's step unshaped (steps in acceleration,
+   torque-rate spikes).
+7. Publish the trajectory (stamped on a fixed 10 ms grid); log each Servo status change
+   ("follow: ...").
+
+**Outcomes** (on every end except a start failure the arm is braked to rest first, within the
+shaping limits; if it does not come to rest within `rest_timeout`: `EXECUTION_FAILED`):
+
+| Outcome | When |
+|---|---|
+| `CANCELLED` | the normal end: cancelled by the client, or replaced by a newer goal on any `/motion/*` action |
+| `INVALID_GOAL` | `speed_scaling` outside (0, 1], empty `target_frame`, `target_timeout` ≤ 0 |
+| `UNSUPPORTED` | `follow_orientation` true; `hardware:=mock` (no effort controller, no streamer) |
+| `NOT_FOUND` | target frame not in TF at the start, lost, or not updated for `target_timeout` |
+| `UNREACHABLE` | **halt watchdog:** Servo reports a halt (collision, singularity, joint bound) for `follow_halt_timeout`; **stall watchdog:** over `follow_stall_window`, the TCP moves along the commanded direction at less than `follow_stall_ratio` of the commanded speed for `follow_stall_timeout` (Servo can slow down towards a singularity without ever reporting a halt). Commands below `follow_stall_min_speed` are not judged |
+| `EXECUTION_FAILED` | Servo returned an invalid state; nobody listens on the controller topic (within 2 s); the arm did not come to rest |
+| `TIMEOUT` | no current joint state at the start |
+| `ROBOT_ERROR` | real robot in reflex or user stop |
+
+A client recovers from `UNREACHABLE` with a planned move (e.g. `MoveToJoints` to the ready
+pose). Before each handover the arm should start from the same pose anyway.
+
+**Shaping profiles** in `config/fer_moveit_motion_server.yaml`:
+
+| Profile | Velocity | Acceleration | Jerk | Use |
+|---|---|---|---|---|
+| `conservative` (default) | `joint_limits.yaml` | `joint_limits.yaml` (datasheet / 4) | 10 × acceleration | the real FER, all experiments |
+| `max_sim` | datasheet | datasheet | datasheet | MuJoCo only, fastest response |
+| `off` | – | – | – | comparison only |
+
+MuJoCo, 10 cm target jumps (20 per run, 22 Nov): `conservative` t90 0.8 s, torque rate per
+jump median ~250 Nm/s (max 770), 0/20 jumps over 1000 Nm/s; `off` t90 0.73 s, median ~2300
+Nm/s, 18–19/20 over. Sine hand: median tracking error 6 mm.
+
+#### Check of the streamer
+
+Moves the TCP a short distance along one axis of `base` through Servo and Ruckig and stops.
+Passes if the TCP covers 80–120 % of the distance and drifts less than 1 cm on the other axes.
+Needs the stack with `effort_trajectory_controller` active; the motion server must not stream
+at the same time.
+
+```bash
+ros2 launch fer_moveit fer_streamer_check.launch.py axis:=x distance:=0.05 speed:=0.05
+```
+
+| Argument | Default | |
+|---|---|---|
+| `axis` | `x` | `x`, `y` or `z` |
+| `distance` | `0.05` | m, signed |
+| `speed` | `0.05` | m/s, > 0 |
+
 ### Launch
 
 ```bash
@@ -174,11 +275,13 @@ ros2 launch fer_moveit fer_moveit_motion_server.launch.py hardware:=mujoco
 
 | Argument | Default | Description |
 |---|---|---|
-| `hardware` | `mujoco` | `real` or `mujoco`; `use_sim_time` follows it |
+| `hardware` | `mujoco` | `real`, `mujoco` or `mock`; `use_sim_time` follows it. `mock` needs `arm_control_type:=position hand_control_type:=position` in the bringup; Follow is `UNSUPPORTED` there |
 | `log_level` | `info` | node log level |
 | `params_file` | `''` | `''` selects `config/fer_moveit_motion_server.yaml` |
 
 `move_group` must run (`fer_move_group.launch.py`) and its arm controller must be active.
+For Follow the launch file also passes the robot model (`moveit_parameters.py`) and the
+`moveit_servo` block to the node: Servo runs in its process.
 
 ### Parameters
 
@@ -188,6 +291,25 @@ ros2 launch fer_moveit fer_moveit_motion_server.launch.py hardware:=mujoco
 | `goal_position_tolerance`, `goal_orientation_tolerance` | 0.001 m, 0.01 rad | pose targets |
 | `rest_velocity`, `rest_timeout` | 0.01 rad/s, 3.0 s | at rest after a stop |
 | `tf_timeout`, `world_model_timeout`, `move_group_timeout`, `startup_timeout` | 0.2, 2.0, 7.0, 10.0 s | |
+
+Follow (`/motion/follow`):
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `follow_gain`, `follow_max_speed` | 2.0 1/s, 0.25 m/s | TCP velocity = feedforward + gain × error, capped (× `speed_scaling`) |
+| `follow_rotation_gain`, `follow_max_rotation_speed` | 2.0 1/s, 0.5 rad/s | the same for the orientation (holds the start orientation) |
+| `follow_velocity_time_constant` | 0.05 s | low-pass of the target velocity estimate |
+| `follow_velocity_hold`, `follow_velocity_fade` | 0.05 s, 0.05 s | feedforward in full while the newest target sample is this old, then faded to 0 |
+| `follow_feedback_period` | 0.1 s | feedback rate |
+| `follow_workspace_min`, `follow_workspace_max` | [0.25, −0.30, 0.25], [0.60, 0.30, 0.50] m | box in `base` the goal is kept in |
+| `follow_halt_timeout` | 1.0 s | halt watchdog |
+| `follow_stall_window`, `follow_stall_min_speed`, `follow_stall_ratio`, `follow_stall_timeout` | 0.5 s, 0.03 m/s, 0.2, 1.5 s | stall watchdog |
+| `follow_shaping_profile` | `conservative` | profile name, or `off` |
+| `follow_shaping.<profile>.max_velocity`, `.max_acceleration`, `.max_jerk` | see the YAML | 7 values each, `fer_joint1..7` |
+| `follow_posture_gain` | 1.0 1/s | posture term; 0 = off |
+| `follow_posture_max_speed` | 0.2 rad/s | cap of the posture velocity (norm) |
+| `follow_posture_rest` | the ready pose | 7 values, rad |
+| `moveit_servo.*` | see the YAML | Servo, run as a library. On the FER keep `publish_joint_velocities: false` (else the JTC rejects every message) and `use_smoothing: false` (else the TCP covers only ~57 % of the commanded motion); `command_out_topic` = the effort JTC; singularity thresholds 17 / 30 |
 
 Fixed in the code, since they change only with the robot or the planner choice: group
 `fer_arm`, TCP `fer_hand_tcp`, hand links, arm joints, frame `base`, pipelines `ompl` and
@@ -201,8 +323,11 @@ colcon test --packages-select fer_moveit
 colcon test-result --verbose
 ```
 
-`test_checks` covers the core; `test_contract` runs the server against fake
-`move_group`, world model and arm; `move_group_test.launch.py` starts the real
+`test_checks` covers the core; `test_follow_law` the follow law, the watchdogs and the
+posture term; `test_joint_shaper` the Ruckig shaping (limits never exceeded, synchronised
+joints, braking); `test_contract` runs the server against fake `move_group`, world model and
+arm; `test_contract_follow` runs Follow against a fake streamer and TF (outcomes, workspace,
+watchdogs, feedforward, replacement); `move_group_test.launch.py` starts the real
 `move_group` with this configuration and checks straight paths, `may_touch`, held objects,
 speed scaling, the closed-finger start state and the stop. Every test runs in its own DDS
 domain on localhost.
@@ -218,6 +343,10 @@ domain on localhost.
 - Straight lines depend on the pose: Pilz checks them against `joint_limits.yaml`, and
   `cartesian_limits.yaml` is sized for poses near `ready`. Close to a singularity even a
   slow straight line can end `NO_PATH`.
+- Follow tracks the position only; the orientation stays as at goal start.
+- Follow's workspace box is fixed by parameters, not derived from the robot's reach.
+- In MuJoCo the measured joint state reaches the controller in bursts, which shows up as
+  torque-rate peaks that the real robot would not have; judge torque rates on the FER.
 
 Example:
 
@@ -233,8 +362,8 @@ ros2 launch fer_moveit fer_move_group.launch.py \
 
 This package is released under the **BSD 3-Clause License** — see
 [`LICENSE`](LICENSE). The motion server (`include/`, `src/`, `test/`,
-`launch/fer_moveit_motion_server.launch.py`) is released under the **Apache License,
-Version 2.0**.
+`launch/fer_moveit_motion_server.launch.py`, `launch/fer_streamer_check.launch.py`,
+`launch/moveit_parameters.py`) is released under the **Apache License, Version 2.0**.
 
 `launch/fer_move_group.launch.py` is adapted from a Franka Robotics example
 distributed under the **Apache License, Version 2.0**, and retains its
